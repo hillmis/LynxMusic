@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Song } from '../types';
-import { getUserPlaylists, addSongToPlaylist, createUserPlaylist } from '../utils/playlistStore';
+import { getUserPlaylists, addSongToPlaylist, createUserPlaylist, FAVORITE_PLAYLIST_TITLE } from '../utils/playlistStore';
 import { saveDownloadedSong, blobToBase64 } from '../utils/fileSystem';
 import { dbSaveLocalSong } from '../utils/db';
 
@@ -45,11 +45,11 @@ export const useSongActions = (deps: Deps = {}) => {
     const handleAddToFavorites = async (song: Song) => {
         try {
             const playlists = await getUserPlaylists();
-            let fav = playlists.find(p => p.title === '我喜欢');
-            if (!fav) fav = await createUserPlaylist('我喜欢');
+            let fav = playlists.find(p => p.title === FAVORITE_PLAYLIST_TITLE);
+            if (!fav) fav = await createUserPlaylist(FAVORITE_PLAYLIST_TITLE);
 
             const ok = await addSongToPlaylist(fav.id, song);
-            toast(ok ? '已添加到“我喜欢”' : '歌曲已在列表');
+            toast(ok ? `已添加到“${FAVORITE_PLAYLIST_TITLE}”` : '歌曲已在列表');
         } catch (e) {
             console.error(e);
             toast('操作失败');
@@ -150,14 +150,14 @@ export const useSongActions = (deps: Deps = {}) => {
         if (songs.length === 0) return;
         try {
             const playlists = await getUserPlaylists();
-            let fav = playlists.find(p => p.title === '我喜欢');
-            if (!fav) fav = await createUserPlaylist('我喜欢');
+            let fav = playlists.find(p => p.title === FAVORITE_PLAYLIST_TITLE);
+            if (!fav) fav = await createUserPlaylist(FAVORITE_PLAYLIST_TITLE);
 
             let count = 0;
             for (const song of songs) {
                 if (await addSongToPlaylist(fav.id, song)) count++;
             }
-            toast(`已将 ${count} 首新歌加入“我喜欢”`);
+            toast(`已将 ${count} 首新歌加入“${FAVORITE_PLAYLIST_TITLE}”`);
         } catch (e) {
             console.error(e);
             toast('批量收藏失败');

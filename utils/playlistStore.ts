@@ -3,6 +3,8 @@
 import { Playlist, Song } from '../types';
 import { dbSavePlaylist, dbDeletePlaylist, getItem } from './db';
 
+export const FAVORITE_PLAYLIST_TITLE = '我喜欢';
+
 const STORE_PLAYLISTS = 'playlists';
 const STORAGE_KEY = 'hm_playlists_v1'; // LocalStorage fallback key
 

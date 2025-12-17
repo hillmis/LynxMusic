@@ -1,15 +1,16 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Song } from '../types';
 import {
   ChevronDown, Play, Pause, Repeat, Repeat1, Shuffle, Heart, ListMusic,
   MoreHorizontal, Tv, Music, X, Volume2, Trash2, Download, Loader2,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, Maximize2
 } from 'lucide-react';
 import 'swiper/css';
 import { useSongActions } from '../hooks/useSongActions';
 import SongActionSheet from '../components/SongActionSheet';
 import { fetchMusicVideo } from '../utils/api';
+import { isSongInFavorites } from '../utils/playlistStore';
 
 interface PlayingProps {
   song: Song;
@@ -42,6 +43,17 @@ const Playing: React.FC<PlayingProps> = ({
   const [showLyrics, setShowLyrics] = useState(false);
   const [showQueue, setShowQueue] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isFavorite, setIsFavorite] = useState(false);
+  const [coverLyricPos, setCoverLyricPos] = useState<number>(0.5);
+
+
+  const scrollToActiveLyric = (behavior: ScrollBehavior = 'smooth') => {
+    if (!lyricScrollRef.current) return;
+    const activeEl = lyricScrollRef.current.children[activeLyricIndex] as HTMLElement;
+    if (activeEl) {
+      activeEl.scrollIntoView({ behavior, block: 'center' });
+    }
+  };
 
   // 定义 quality 和 isSQ 变量
   const quality = song.quality || 'SQ';
@@ -79,6 +91,22 @@ const Playing: React.FC<PlayingProps> = ({
       });
     }
   }, [viewMode, isActiveSlide, song]);
+
+  useEffect(() => {
+    if (!song?.id) {
+      setIsFavorite(false);
+      return;
+    }
+    isSongInFavorites(song.id).then(setIsFavorite);
+    const positions = [2 / 7, 4 / 7, 6 / 7];
+    setCoverLyricPos(positions[Math.floor(Math.random() * positions.length)]);
+  }, [song?.id]);
+
+  // 每次歌词行切换时也随机位置
+  useEffect(() => {
+    const positions = [2 / 7, 4 / 7, 6 / 7];
+    setCoverLyricPos(positions[Math.floor(Math.random() * positions.length)]);
+  }, [activeLyricIndex]);
 
   const handleVideoPlay = () => {
     setVideoState(prev => ({ ...prev, isPlaying: true }));
@@ -118,15 +146,25 @@ const Playing: React.FC<PlayingProps> = ({
 
     const idx = lyricsLines.findIndex(line => line.time > progress) - 1;
     const targetIndex = idx >= 0 ? idx : 0;
+    const leadIdx = lyricsLines.findIndex(line => line.time > progress + 1.2);
+    const scrollIndex = leadIdx > 0 ? Math.max(leadIdx - 1, 0) : targetIndex;
     setActiveLyricIndex(targetIndex);
 
     if (showLyrics && lyricScrollRef.current && !isUserScrolling.current) {
-      const activeEl = lyricScrollRef.current.children[targetIndex] as HTMLElement;
+      const activeEl = lyricScrollRef.current.children[scrollIndex] as HTMLElement;
       if (activeEl) {
         activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }
   }, [progress, lyricsLines, showLyrics, isActiveSlide]);
+
+  // 打开歌词或当前行变化时，立即居中当前行
+  useEffect(() => {
+    if (showLyrics && isActiveSlide) {
+      isUserScrolling.current = false;
+      setTimeout(() => scrollToActiveLyric('auto'), 20);
+    }
+  }, [showLyrics, activeLyricIndex, isActiveSlide]);
 
   const handleVideoTimeUpdate = () => {
     if (videoRef.current) {
@@ -166,6 +204,10 @@ const Playing: React.FC<PlayingProps> = ({
   const unifiedSeek = (val: number) => {
     if (viewMode === 'music') {
       onSeek(val);
+      if (showLyrics) {
+        isUserScrolling.current = false;
+        setTimeout(() => scrollToActiveLyric('auto'), 50);
+      }
     } else {
       if (videoRef.current) {
         videoRef.current.currentTime = val;
@@ -177,7 +219,7 @@ const Playing: React.FC<PlayingProps> = ({
   const handleLyricScroll = () => {
     isUserScrolling.current = true;
     if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
-    scrollTimeoutRef.current = setTimeout(() => { isUserScrolling.current = false; }, 5000);
+    scrollTimeoutRef.current = setTimeout(() => { isUserScrolling.current = false; }, 4000);
   };
 
   const formatTime = (time: number) => {
@@ -194,11 +236,53 @@ const Playing: React.FC<PlayingProps> = ({
     }
   };
 
+  const handleFavorite = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const res = await songActions.handleAddToFavorites(song);
+    if (typeof res === 'boolean') setIsFavorite(res);
+  };
+
+  const currentLine = useMemo(() => lyricsLines[activeLyricIndex], [lyricsLines, activeLyricIndex]);
+  const nextLine = useMemo(() => lyricsLines[activeLyricIndex + 1], [lyricsLines, activeLyricIndex]);
+  const VISUAL_LEAD_SECONDS = 0.8; // 提前一点点让颜色先动起来
+
+  const lineProgress = useMemo(() => {
+    if (!currentLine) return 0;
+    const start = currentLine.time || 0;
+    const end = nextLine?.time ?? currentDuration ?? start + 1;
+    if (end <= start) return 0;
+    const ratio = (currentProgress + VISUAL_LEAD_SECONDS - start) / (end - start);
+    return Math.min(1, Math.max(0, ratio));
+  }, [currentLine, nextLine, currentDuration, currentProgress]);
+  const activeLineProgress = Math.min(100, Math.max(0, lineProgress * 100));
+
+  const activeLineBarStyle = useMemo(() => ({
+    width: `${activeLineProgress}%`,
+    pointerEvents: 'none' as const
+  }), [activeLineProgress]);
+
+  const handleLandscapePlay = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const target = videoRef.current;
+    if (!target) return;
+    try {
+      if (target.requestFullscreen) {
+        await target.requestFullscreen();
+      } else if (target.parentElement?.requestFullscreen) {
+        await target.parentElement.requestFullscreen();
+      }
+      const orientation = (screen as any)?.orientation;
+      if (orientation?.lock) {
+        orientation.lock('landscape').catch(() => { });
+      }
+    } catch { }
+  };
+
   return (
     <div className="relative w-full h-full flex flex-col bg-slate-950 text-white overflow-hidden">
       {/* 动态模糊背景 */}
       <div className="absolute inset-0 z-0">
-        <img src={song.coverUrl} alt="bg" className="w-full h-full object-cover opacity-40 blur-3xl scale-125 transition-opacity duration-700" />
+        <img src={song.coverUrl} alt="bg" className="w-full h-full object-cover opacity-80 blur-3xl scale-125 transition-opacity duration-700" />
         <div className="absolute inset-0 bg-black/40" />
       </div>
 
@@ -211,13 +295,16 @@ const Playing: React.FC<PlayingProps> = ({
         <div className="flex bg-white/10 backdrop-blur-md rounded-full p-1 border border-white/10">
           <button
             onClick={() => setViewMode('music')}
-            className={`flex items-center gap-1 px-4 py-1.5 rounded-full text-xs font-bold transition-all ${viewMode === 'music' ? 'bg-white text-black' : 'text-slate-300'}`}
+            className={`flex items-center gap-1 px-4 py-1.5 rounded-full text-xs font-bold transition-all ${viewMode === 'music' ? ' text-slate-300' : 'text-slate-500'}`}
           >
             <Music size={12} /> 歌曲
           </button>
+            
+{/* 竖线分隔符 */}
+  <div className="w-px bg-white/20 my-1.5"></div>
           <button
             onClick={() => setViewMode('video')}
-            className={`flex items-center gap-1 px-4 py-1.5 rounded-full text-xs font-bold transition-all ${viewMode === 'video' ? 'bg-white text-black' : 'text-slate-300'}`}
+            className={`flex items-center gap-1 px-4 py-1.5 rounded-full text-xs font-bold transition-all ${viewMode === 'video' ? ' text-slate-300' : 'text-slate-500'}`}
           >
             MV <Tv size={12} />
           </button>
@@ -236,13 +323,30 @@ const Playing: React.FC<PlayingProps> = ({
         {viewMode === 'music' ? (
           !showLyrics ? (
             <div className="w-full flex items-center justify-center animate-in zoom-in duration-500 px-6">
-              <div className="relative w-[75vw] h-[75vw] max-w-[380px] max-h-[380px] shadow-2xl rounded-2xl">
+              <div className="relative w-[70vw] h-[70vw] max-w-[380px] max-h-[380px] shadow-2xl rounded-2xl overflow-hidden">
                 <img
                   src={song.coverUrl}
                   alt="cover"
                   className="w-full h-full object-cover rounded-2xl"
                 />
-                <div className="absolute inset-0 bg-gradient-to-tr from-black/20 to-transparent pointer-events-none rounded-2xl" />
+                <div className="absolute inset-0 bg-gradient-to-tr from-black/25 to-transparent pointer-events-none rounded-2xl" />
+                <div
+                  className="absolute inset-x-4 flex justify-center"
+                  style={{ top: `${coverLyricPos * 100}%`, transform: 'translateY(-50%)' }}
+                >
+                  <div className="relative w-full max-w-[85%]">
+                    <span className="absolute -left-4 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-white animate-pulse" />
+                    <div className="relative inline-flex items-center px-4 py-1.5 rounded-2xl bg-black/45 backdrop-blur-sm overflow-hidden max-w-full">
+                      <span
+                        className="absolute left-0 top-0 h-full rounded-2xl bg-white/10 transition-all duration-100 ease-linear"
+                        style={{ width: `${activeLineProgress}%` }}
+                      />
+                      <span className="relative z-10 text-xs font-semibold text-white line-clamp-2 whitespace-nowrap">
+                        {lyricsLines[activeLyricIndex]?.text || '暂无歌词'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           ) : (
@@ -253,10 +357,19 @@ const Playing: React.FC<PlayingProps> = ({
               <div ref={lyricScrollRef} className="w-full space-y-8 py-[60%] transition-all">
                 {lyricsLines.map((line, i) => (
                   <p key={i}
-                    className={`text-base transition-all duration-300 cursor-pointer px-2 ${i === activeLyricIndex ? 'text-white text-2xl font-bold scale-105' : 'text-white/40 hover:text-white/70'}`}
+                    className={`relative text-base leading-7 transition-all duration-300 cursor-pointer px-3 py-3 rounded-xl overflow-hidden w-full ${i === activeLyricIndex ? 'text-white text-2xl font-bold scale-105 bg-white/5' : 'text-white/40 hover:text-white/70'}`}
                     onClick={(e) => { e.stopPropagation(); unifiedSeek(line.time); }}
                   >
-                    {line.text}
+                    {i === activeLyricIndex && (
+                      <span className="relative inline-block">
+                        <span
+                          className="absolute left-0 top-[-10%] h-[120%] rounded-full transition-all duration-100 ease-linear"
+                          style={activeLineBarStyle}
+                        />
+                        <span className="relative z-10">{line.text}</span>
+                      </span>
+                    )}
+                    {i !== activeLyricIndex && <span className="relative z-10">{line.text}</span>}
                   </p>
                 ))}
               </div>
@@ -303,6 +416,14 @@ const Playing: React.FC<PlayingProps> = ({
             </p>
           </div>
           <div className="flex gap-4">
+            {song.mvUrl && viewMode === 'video' && (
+              <button
+                onClick={handleLandscapePlay}
+                className="text-white/60 hover:text-white transition-transform active:scale-110 disabled:opacity-50"
+              >
+                <Maximize2 size={24} />
+              </button>
+            )}
             {/* ✅ 修复：下载按钮逻辑，根据 viewMode 决定下载音乐还是 MV */}
             <button
               onClick={(e) => {
@@ -319,10 +440,10 @@ const Playing: React.FC<PlayingProps> = ({
               {isDownloading ? <Loader2 size={24} className="animate-spin" /> : <Download size={24} />}
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); songActions.handleAddToFavorites(song) }}
-              className="text-white/60 hover:text-red-500 transition-transform active:scale-110"
+              onClick={handleFavorite}
+              className={`transition-transform active:scale-110 ${isFavorite ? 'text-red-500' : 'text-white/60'}`}
             >
-              <Heart size={24} />
+              <Heart size={24} className={isFavorite ? 'fill-current' : ''} />
             </button>
           </div>
         </div>

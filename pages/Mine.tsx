@@ -279,18 +279,15 @@ const Mine: React.FC<MineProps> = ({
         </div>
 
         <div
-          onClick={() => {
-            if (onNavigateLocal) onNavigateLocal();
-            else window.webapp?.toast?.('请前往本地页面查看');
-          }}
+          onClick={() => window.webapp?.toast?.('福利中心即将上线')}
           className="bg-slate-800/40 p-4 rounded-2xl flex items-center gap-3 cursor-pointer shadow-sm hover:shadow-md transition-all border border-white/5 group"
         >
-          <div className="w-10 h-10 rounded-full bg-orange-500/10 flex items-center justify-center text-orange-500 group-hover:scale-110 transition-transform">
-            <FolderOpen size={20} />
+          <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
+            <Gift size={20} />
           </div>
           <div>
-            <div className="text-white font-bold text-sm">本地文件</div>
-            <div className="text-xs text-slate-500">扫描管理</div>
+            <div className="text-white font-bold text-sm">福利中心</div>
+            <div className="text-xs text-slate-500">签到 · 权益 · 活动</div>
           </div>
         </div>
       </div>
@@ -401,7 +398,7 @@ const Mine: React.FC<MineProps> = ({
                 <div className="text-slate-200 text-sm font-bold truncate flex items-center gap-1 text-slate-900">
                   <span className="text-slate-200">我喜欢</span>
                 </div>
-                <div className="text-xs text-slate-500 mt-1">{favorite.songCount || 0} 首 · 系统歌单</div>
+                <div className="text-xs text-slate-500 mt-1">{favorite.songCount || 0} 首 · 我的红心歌曲</div>
               </div>
             </div>
           )}
@@ -416,7 +413,7 @@ const Mine: React.FC<MineProps> = ({
 
           {otherPlaylists.map(pl => {
             const isQQ = pl.source === 'qq' || pl.id.startsWith('qq_pl_');
-            const isKuwo = pl.source === 'kuwo' || pl.id.startsWith('kw_pl_');
+            const isKuwo = pl.source === 'kw' || pl.id.startsWith('kw_pl_');
             const isImported = isQQ || isKuwo;
 
             return (

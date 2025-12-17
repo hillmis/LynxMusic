@@ -1,8 +1,8 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { X, Heart, ListPlus, ListMusic, Download, Video, Check, Plus, PlayCircle } from 'lucide-react';
+import { X, Heart, ListPlus, ListMusic, Download, Check, Plus, PlayCircle } from 'lucide-react';
 import { Playlist, Song } from '../types';
-import { getUserPlaylists } from '../utils/playlistStore';
+import { getUserPlaylists, isSongInFavorites } from '../utils/playlistStore';
 
 interface Props {
     open: boolean;
@@ -34,12 +34,18 @@ export default function SongActionSheet({
     const [playlists, setPlaylists] = useState<Playlist[]>([]);
     const [creating, setCreating] = useState(false);
     const [newTitle, setNewTitle] = useState('');
+    const [isFavorite, setIsFavorite] = useState(false);
 
     useEffect(() => {
         if (open) {
             getUserPlaylists().then(setPlaylists);
             setCreating(false);
             setNewTitle('');
+            if (song?.id) {
+                isSongInFavorites(song.id).then(setIsFavorite);
+            } else {
+                setIsFavorite(false);
+            }
         }
     }, [open]);
 
@@ -87,9 +93,18 @@ export default function SongActionSheet({
                         <ListMusic size={22} className=" text-indigo-400" />
                         <span className="text-[10px]  text-slate-300">下一首</span>
                     </button>
-                    <button onClick={() => handleAction(onAddToFavorites)} className="flex flex-col items-center gap-2 p-3 rounded-2xl bg-slate-800/50 hover:bg-slate-800 active:scale-95 transition-all">
-                        <Heart size={22} className="text-red-400" />
-                        <span className="text-[10px]  text-slate-300">喜欢</span>
+                    <button
+                        onClick={() => {
+                            if (onAddToFavorites && song) {
+                                onAddToFavorites(song);
+                                setIsFavorite(true);
+                            }
+                            onClose();
+                        }}
+                        className="flex flex-col items-center gap-2 p-3 rounded-2xl bg-slate-800/50 hover:bg-slate-800 active:scale-95 transition-all"
+                    >
+                        <Heart size={22} className={isFavorite ? 'text-red-500 fill-red-500' : 'text-red-400'} />
+                        <span className="text-[10px]  text-slate-300">{isFavorite ? '已喜欢' : '喜欢'}</span>
                     </button>
                     <button onClick={() => handleAction(onDownloadMusic)} className="flex flex-col items-center gap-2 p-3 rounded-2xl bg-slate-800/50 hover:bg-slate-800 active:scale-95 transition-all">
                         <Download size={22} className="text-emerald-400" />
