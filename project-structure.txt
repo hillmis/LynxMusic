@@ -1,0 +1,42 @@
+├── .gitignore
+├── App.tsx
+├── components
+│   ├── AddToPlaylistModal.tsx
+│   ├── BottomNav.tsx
+│   ├── PlayerBar.tsx
+│   ├── PlayerSwiper.tsx
+│   ├── SongActionSheet.tsx
+│   └── SongItem.tsx
+├── constants.ts
+├── hillmusicV2.zip
+├── hooks
+│   ├── useAudioPlayer.ts
+│   └── useSongActions.ts
+├── index.html
+├── index.tsx
+├── metadata.json
+├── package-lock.json
+├── package.json
+├── pages
+│   ├── ChartDetail.tsx
+│   ├── CheckIn.tsx
+│   ├── Discover.tsx
+│   ├── Home.tsx
+│   ├── Local.tsx
+│   ├── Mine.tsx
+│   ├── Playing.tsx
+│   ├── PlaylistDetail.tsx
+│   ├── Recent.tsx
+│   ├── SeeAllPlaylists.tsx
+│   ├── SeeAllSongs.tsx
+│   ├── Settings.tsx
+│   └── StatisticDetail.tsx
+├── project-structure.txt
+├── tsconfig.json
+├── types.ts
+├── utils
+│   ├── api.ts
+│   ├── db.ts
+│   ├── fileSystem.ts
+│   └── playlistStore.ts
+├── vite.config.ts

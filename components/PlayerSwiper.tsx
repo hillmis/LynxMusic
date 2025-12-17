@@ -1,0 +1,169 @@
+
+import React, { useEffect, useRef, useMemo } from 'react';
+import { Swiper, SwiperSlide } from 'swiper/react';
+import { Virtual } from 'swiper/modules';
+import { Swiper as SwiperType } from 'swiper';
+import 'swiper/css';
+import 'swiper/css/virtual';
+
+import Playing from '../pages/Playing';
+import { Song } from '../types';
+import { fetchSongDetail } from '../utils/api';
+
+interface PlayerSwiperProps {
+    currentSong?: Song;
+    playlist?: Song[];
+    isPlaying: boolean;
+    progress: number;
+    duration: number;
+    mode: string;
+    setMode: (mode: any) => void;
+    onClose: () => void;
+    onTogglePlay: () => void;
+    onNext: () => void;
+    onPrev: () => void;
+    onSeek: (val: number) => void;
+    onPlayFromQueue: (song: Song) => void;
+    onRemoveFromQueue: (id: string) => void;
+    onUpdateSong: (song: Song) => void;
+    onAddToQueue: (song: Song) => void;
+    // ✅ 接收父组件传递的 ViewMode 状态
+    viewMode: 'music' | 'video';
+    setViewMode: (mode: 'music' | 'video') => void;
+}
+
+const PlayerSwiper: React.FC<PlayerSwiperProps> = ({
+    currentSong,
+    playlist = [],
+    isPlaying,
+    progress,
+    duration,
+    mode,
+    setMode,
+    onClose,
+    onTogglePlay,
+    onNext,
+    onPrev,
+    onSeek,
+    onPlayFromQueue,
+    onRemoveFromQueue,
+    onUpdateSong,
+    onAddToQueue,
+    viewMode,      // ✅
+    setViewMode,   // ✅
+}) => {
+    const swiperRef = useRef<SwiperType | null>(null);
+
+    const activeIndex = useMemo(() => {
+        if (!currentSong || playlist.length === 0) return 0;
+        const idx = playlist.findIndex(s => s.id === currentSong.id);
+        return idx >= 0 ? idx : 0;
+    }, [currentSong, playlist]);
+
+    // 同步 Swiper 位置
+    useEffect(() => {
+        if (!swiperRef.current) return;
+        if (swiperRef.current.activeIndex !== activeIndex) {
+            swiperRef.current.slideTo(activeIndex, 0);
+        }
+    }, [activeIndex]);
+
+    const handleSlideChange = async (swiper: SwiperType) => {
+        const newIndex = swiper.activeIndex;
+        const song = playlist[newIndex];
+        if (!song || !currentSong) return;
+
+        // 只有索引真正改变时才切歌
+        if (song.id !== currentSong.id) {
+            onPlayFromQueue(song);
+
+            // ✅ 保持模式：切歌时不强制重置为 music，保持当前 viewMode
+            // Playing.tsx 内部会负责检测新歌是否有 MV，无 MV 则会自动切回 music
+        }
+
+        preloadAround(newIndex);
+    };
+
+    const preloadAround = async (index: number) => {
+        const indices = [index - 1, index + 1];
+
+        for (const i of indices) {
+            const song = playlist[i];
+            if (!song) continue;
+
+            if (!song.url || !song.isDetailsLoaded) {
+                try {
+                    const detailed = await fetchSongDetail(song);
+                    if (detailed?.id === song.id) {
+                        onUpdateSong(detailed);
+                    }
+                } catch (e) {
+                    console.warn('预加载失败', e);
+                }
+            }
+        }
+    };
+
+    if (!currentSong || playlist.length === 0) {
+        return null;
+    }
+
+    return (
+        <div className="fixed inset-0 z-50 bg-black">
+            <Swiper
+                modules={[Virtual]}
+                direction="vertical"
+                className="w-full h-full"
+                initialSlide={activeIndex}
+                onSwiper={(swiper) => (swiperRef.current = swiper)}
+                onSlideChange={handleSlideChange}
+                virtual={{
+                    enabled: true,
+                    addSlidesBefore: 1,
+                    addSlidesAfter: 1,
+                }}
+                threshold={15}
+                resistance={true}
+                resistanceRatio={0.65}
+                speed={500}
+                noSwiping={true}
+                noSwipingClass="swiper-no-swiping"
+                touchRatio={1.0}
+                followFinger={true}
+            >
+                {playlist.map((song, index) => (
+                    <SwiperSlide
+                        key={`${song.id}-${index}`}
+                        virtualIndex={index}
+                        className="w-full h-full"
+                    >
+                        {({ isActive }) => (
+                            <Playing
+                                song={song}
+                                isPlaying={isActive ? isPlaying : false}
+                                playlist={playlist}
+                                progress={isActive ? progress : 0}
+                                duration={isActive ? duration : 0}
+                                mode={mode}
+                                setMode={setMode}
+                                onClose={onClose}
+                                onTogglePlay={onTogglePlay}
+                                onNext={onNext}
+                                onPrev={onPrev}
+                                onSeek={onSeek}
+                                onPlayFromQueue={onPlayFromQueue}
+                                onRemoveFromQueue={onRemoveFromQueue}
+                                isActiveSlide={isActive}
+                                viewMode={viewMode}
+                                setViewMode={setViewMode}
+                                onAddToQueue={onAddToQueue}
+                            />
+                        )}
+                    </SwiperSlide>
+                ))}
+            </Swiper>
+        </div>
+    );
+};
+
+export default PlayerSwiper;

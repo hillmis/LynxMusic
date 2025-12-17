@@ -1,81 +1,29 @@
-import { Song, Playlist, ChartData } from './types';
 
-export const MOCK_SONGS: Song[] = [
-  {
-    id: '1',
-    title: '夜曲',
-    artist: '周杰伦',
-    album: '十一月的萧邦',
-    coverUrl: 'https://picsum.photos/300/300?random=1',
-    duration: 226,
-  },
-  {
-    id: '2',
-    title: '光年之外',
-    artist: 'G.E.M. 邓紫棋',
-    album: '摩天动物园',
-    coverUrl: 'https://picsum.photos/300/300?random=2',
-    duration: 235,
-  },
-  {
-    id: '3',
-    title: 'Blinding Lights',
-    artist: 'The Weeknd',
-    album: 'After Hours',
-    coverUrl: 'https://picsum.photos/300/300?random=3',
-    duration: 200,
-  },
-  {
-    id: '4',
-    title: '七里香',
-    artist: '周杰伦',
-    album: '七里香',
-    coverUrl: 'https://picsum.photos/300/300?random=4',
-    duration: 299,
-  },
-  {
-    id: '5',
-    title: 'Levitating',
-    artist: 'Dua Lipa',
-    album: 'Future Nostalgia',
-    coverUrl: 'https://picsum.photos/300/300?random=5',
-    duration: 203,
-  },
-  {
-    id: '6',
-    title: '孤勇者',
-    artist: '陈奕迅',
-    album: '孤勇者',
-    coverUrl: 'https://picsum.photos/300/300?random=6',
-    duration: 256,
-  }
+
+import { Song, Playlist } from './types';
+
+// 统一配置动态歌单关键词
+// ✅ 修改：扩展配置结构，支持 'keyword' 类型和 'qq_id' 类型
+export const DYNAMIC_PLAYLIST_CONFIG = [
+  // 原有动态关键词歌单
+  { id: 'hot', name: '热门歌单', key: '热门', type: 'keyword' },
+  { id: 'classic', name: '经典老歌', key: '经典', type: 'keyword' },
+  { id: 'douyin', name: '抖音热歌', key: '抖音', type: 'keyword' },
+  { id: 'rock', name: '摇滚激情', key: '摇滚', type: 'keyword' },
+  { id: 'ancient', name: '古风雅韵', key: '古风', type: 'keyword' },
+  { id: 'heal', name: '治愈系', key: '治愈', type: 'keyword' },
+  { id: 'english', name: '欧美流行', key: '英文', type: 'keyword' },
+  { id: 'dj', name: '车载DJ', key: '车载', type: 'keyword' },
+
+  // ✅ 新增：推荐的 QQ 歌单 (ID 来自你提供的示例或其他热门ID)
+  // key 填写 纯数字 disstid
+  { id: 'qq_hot', name: '全网热歌', key: '8293804365', type: 'qq_id', tag: '官方甄选' },
+  { id: 'qq_emo', name: '伤感治愈', key: '8626636060', type: 'qq_id', tag: '治愈' },
 ];
 
-export const MOCK_PLAYLISTS: Playlist[] = [
-  {
-    id: 'p1',
-    title: '午后慵懒时光',
-    creator: 'HillMusic 官方',
-    coverUrl: 'https://picsum.photos/300/300?random=10',
-    songCount: 45
-  },
-  {
-    id: 'p2',
-    title: '运动燃脂必备',
-    creator: '健身达人',
-    coverUrl: 'https://picsum.photos/300/300?random=11',
-    songCount: 32
-  },
-  {
-    id: 'p3',
-    title: '深度专注/学习',
-    creator: '自律社',
-    coverUrl: 'https://picsum.photos/300/300?random=12',
-    songCount: 120
-  }
-];
-
-export const LISTENING_STATS: ChartData[] = [
+export const MOCK_SONGS: Song[] = [];
+export const MOCK_PLAYLISTS: Playlist[] = [];
+export const LISTENING_STATS: any[] = [ // Mock
   { day: '周一', minutes: 45 },
   { day: '周二', minutes: 70 },
   { day: '周三', minutes: 30 },
