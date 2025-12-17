@@ -102,7 +102,7 @@ const App: React.FC = () => {
       case Tab.HOME: return <Home onPlaySong={player.playSong} onNavigateCheckIn={() => setSubView({ type: 'CHECK_IN' })} onNavigatePlaylist={(pl) => setSubView({ type: 'PLAYLIST_DETAIL', playlist: pl })} onNavigateSeeAllSongs={() => setSubView({ type: 'SEE_ALL_SONGS' })} onNavigateSeeAllPlaylists={() => setSubView({ type: 'SEE_ALL_PLAYLISTS' })} />;
       case Tab.DISCOVER: return <Discover onPlaySong={player.playSong} currentSong={player.currentSong} onNavigateChart={(t, g, c) => setSubView({ type: 'CHART_DETAIL', title: t, gradient: g, chartId: c })} onAddToQueue={player.addToQueue} />;
       case Tab.LOCAL: return <Local />;
-      case Tab.MINE: return <Mine onNavigatePlaylist={(pl) => setSubView({ type: 'PLAYLIST_DETAIL', playlist: pl })} onNavigateSettings={() => setSubView({ type: 'SETTINGS' })} onNavigateChart={() => setSubView({ type: 'STATISTIC_DETAIL' })} onNavigateRecent={() => setSubView({ type: 'RECENT' })} onNavigateLocal={() => setActiveTab(Tab.LOCAL)} />;
+      case Tab.MINE: return <Mine onNavigatePlaylist={(pl) => setSubView({ type: 'PLAYLIST_DETAIL', playlist: pl })} onNavigateSettings={() => setSubView({ type: 'SETTINGS' })} onNavigateChart={() => setSubView({ type: 'STATISTIC_DETAIL' })} onNavigateRecent={() => setSubView({ type: 'RECENT' })} onNavigateLocal={() => setActiveTab(Tab.LOCAL)} onNavigateCheckIn={() => setSubView({ type: 'CHECK_IN' })} />;
       default: return null;
     }
   };

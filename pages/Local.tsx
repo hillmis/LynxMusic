@@ -6,7 +6,7 @@ import {
   Smartphone, Loader2, Music, ListMusic, X, ArrowLeft, Video
 } from 'lucide-react';
 import { Song } from '../types';
-import { dbGetLocalSongs, dbSaveLocalSong, dbClearLocalSongs } from '../utils/db';
+import { dbGetLocalSongs, dbSaveLocalSong, dbClearLocalSongs, dbDeleteLocalSong } from '../utils/db';
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
 import { useSongActions } from '../hooks/useSongActions';
 import SongActionSheet from '../components/SongActionSheet';
@@ -77,17 +77,38 @@ const MUSIC_APP_PATHS: Record<string, string> = {
   '视频': '/storage/emulated/0/Movies/'
 };
 
+const detectSourceFromPath = (path?: string): SourceType => {
+  if (!path) return 'local';
+  const normalized = path.toLowerCase();
+  for (const [app, dir] of Object.entries(MUSIC_APP_PATHS)) {
+    const clean = dir.replace(/\/$/, '').toLowerCase();
+    if (normalized.includes(clean)) {
+      if (app.includes('QQ')) return 'qq';
+      if (app.includes('网易')) return 'wy';
+      if (app.includes('酷我')) return 'kw';
+      if (app.includes('酷狗')) return 'kg';
+      if (app.includes('Hill')) return 'Hill';
+      if (app.includes('Download')) return 'download';
+      if (app.includes('咪咕')) return 'migu';
+      return app;
+    }
+  }
+  return 'local';
+};
+
 // --- 辅助组件 ---
 const SourceBadge: React.FC<{ source: SourceType }> = ({ source }) => {
   let color = 'bg-slate-600';
   let label = source;
 
-  if (source.includes('QQ')) { color = 'bg-green-600'; label = 'QQ音乐'; }
-  else if (source.includes('网易')) { color = 'bg-red-600'; label = '网易云'; }
-  else if (source.includes('酷我')) { color = 'bg-yellow-600'; label = '酷我'; }
-  else if (source.includes('酷狗')) { color = 'bg-blue-600'; label = '酷狗'; }
-  else if (source.includes('Hill')) { color = 'bg-indigo-600'; label = 'Hill'; }
-  else if (source.includes('Download')) { color = 'bg-purple-600'; label = '下载'; }
+  const src = (source || '').toString().toLowerCase();
+  if (src.includes('qq')) { color = 'bg-green-600'; label = 'QQ'; }
+  else if (src.includes('wy') || src.includes('网易') || src.includes('netease')) { color = 'bg-red-600'; label = 'WY'; }
+  else if (src.includes('kw') || src.includes('酷我')) { color = 'bg-yellow-600'; label = 'KW'; }
+  else if (src.includes('kg') || src.includes('酷狗')) { color = 'bg-blue-600'; label = 'KG'; }
+  else if (src.includes('hill')) { color = 'bg-indigo-600'; label = 'Hill'; }
+  else if (src.includes('migu')) { color = 'bg-pink-600'; label = 'MG'; }
+  else if (src.includes('download') || src.includes('dl')) { color = 'bg-purple-600'; label = 'DL'; }
   else { label = '本地'; }
 
   return (
@@ -193,7 +214,7 @@ const Local: React.FC = () => {
             ...item,
             addDate: dateVal,
             playCount: item.playCount || 0,
-            source: (item.source as SourceType) || 'local',
+            source: (item.source as SourceType) || detectSourceFromPath(item.path),
             quality: 'Local' as QualityType
           });
         }
@@ -204,13 +225,7 @@ const Local: React.FC = () => {
           const folderName = folderPath.split('/').pop() || 'unknown';
 
           if (!folderMap.has(folderPath)) {
-            let srcIcon = 'local';
-            for (const [key, val] of Object.entries(MUSIC_APP_PATHS)) {
-              if (folderPath.includes(val.replace(/\/$/, ''))) {
-                srcIcon = key;
-                break;
-              }
-            }
+            let srcIcon = detectSourceFromPath(folderPath);
             folderMap.set(folderPath, {
               id: `folder_${folderPath}`,
               name: folderName,
@@ -300,19 +315,36 @@ const Local: React.FC = () => {
     player.playSong(playObj);
   };
 
+  const resolveLocalMvUrl = (mv: LocalMV | any): string | null => {
+    const filePath = mv.path;
+    if (filePath && typeof webapp !== 'undefined') {
+      try {
+        const size = webapp.gainsize?.(filePath);
+        if (typeof size === 'number' && size > 0) return `file://${filePath}`;
+      } catch { }
+    }
+    return mv.mvUrl || mv.url || null;
+  };
+
   const handlePlayMV = (mv: LocalMV | any) => {
+    const mvUrl = resolveLocalMvUrl(mv);
+    if (!mvUrl) {
+      window.webapp?.toast?.('未找到本地或在线 MV');
+      return;
+    }
     const videoSong: Song = {
       id: mv.id,
       title: mv.title,
       artist: mv.artist || '未知艺术家',
       coverUrl: mv.coverUrl || '',
-      url: `file://${mv.path}`,
-      mvUrl: `file://${mv.path}`,
+      url: mvUrl,
+      mvUrl: mvUrl,
       path: mv.path,
-      source: 'local',
+      source: mvUrl.startsWith('file://') ? 'local' : 'download',
       isDetailsLoaded: true
     };
-    player.playSong(videoSong);
+    // 跳转播放页 MV 模式
+    window.dispatchEvent(new CustomEvent('hm-play-mv', { detail: videoSong }));
     window.webapp?.toast?.('正在打开视频...');
   };
 
@@ -327,6 +359,32 @@ const Local: React.FC = () => {
   const handleFolderClick = (folder: LocalFolder) => {
     setViewingFolder(folder.path);
     setSearchTerm('');
+  };
+
+  const handleDeleteLocal = async (item: LocalSong | LocalMV) => {
+    if (!item.path) return;
+    try {
+      if (typeof webapp !== 'undefined') {
+        try { webapp.bestow?.() || webapp.rights?.(); } catch { }
+        const deleter = (webapp as any).delfile || (webapp as any).deletefile || (webapp as any).deleteFile;
+        const ok = deleter ? deleter(item.path) : false;
+        if (!ok) {
+          window.webapp?.toast?.('删除失败，接口不可用');
+          return;
+        }
+      }
+    } catch { }
+
+    await dbDeleteLocalSong(item.path);
+    setLocalSongs(prev => prev.filter(s => s.path !== item.path));
+    setLocalMvs(prev => prev.filter(m => m.path !== item.path));
+    setLocalFolders(prev => {
+      const updated = prev.map(f => f.path === item.path?.substring(0, item.path.lastIndexOf('/'))
+        ? { ...f, songCount: Math.max(0, f.songCount - 1) }
+        : f);
+      return updated.filter(f => f.songCount > 0);
+    });
+    window.webapp?.toast?.('已删除本地文件');
   };
 
   const handleScanToggle = async () => {
@@ -518,7 +576,7 @@ const Local: React.FC = () => {
       url: `file://${path}`,
       path: path,
       quality: 'Local',
-      source: source as any,
+      source: detectSourceFromPath(path) || source as any,
       isDetailsLoaded: true,
       // ✅ 修复：扫描时记录时间戳
       addDate: Date.now()
@@ -717,6 +775,14 @@ const Local: React.FC = () => {
                   {!isMV && (
                     <button onClick={(e) => { e.stopPropagation(); setActionSong(item as Song); setActionOpen(true); }} className="p-2 text-slate-500 hover:text-white rounded-full hover:bg-white/10">
                       <MoreVertical size={16} />
+                    </button>
+                  )}
+                  {viewingFolder && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleDeleteLocal(item); }}
+                      className="p-2 text-slate-500 hover:text-red-400 rounded-full hover:bg-white/10 ml-1"
+                    >
+                      <Trash2 size={16} />
                     </button>
                   )}
                 </div>

@@ -32,23 +32,6 @@ const SeeAllSongs: React.FC<SeeAllSongsProps> = ({
                 setSongs(basicList);
                 setLoading(false);
             }
-
-            if (basicList.length > 0) {
-                for (let i = 0; i < basicList.length; i++) {
-                    if (!isMountedRef.current) break;
-                    try {
-                        const detail = await fetchSongDetail(basicList[i]);
-                        setSongs(prev => {
-                            const newList = [...prev];
-                            if (newList[i] && newList[i].id === basicList[i].id) {
-                                newList[i] = detail;
-                            }
-                            return newList;
-                        });
-                        await new Promise(r => setTimeout(r, 50));
-                    } catch (e) { console.warn(e); }
-                }
-            }
         };
         load();
         return () => { isMountedRef.current = false; };

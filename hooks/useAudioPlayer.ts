@@ -20,6 +20,7 @@ export const useAudioPlayer = () => {
     const [duration, setDuration] = useState(0);
 
     const [mode, setMode] = useState<Mode>('sequence');
+    const fallbackTriedRef = useRef<string | null>(null);
 
     // 统计：当前歌曲播放会话
     const statRef = useRef({
@@ -182,6 +183,15 @@ export const useAudioPlayer = () => {
             console.error('Audio Error:', e);
             setIsLoading(false);
             setIsPlaying(false);
+            // 本地文件损坏或缺失时，尝试在线搜索获取
+            if (currentSong && currentSong.id !== fallbackTriedRef.current) {
+                fallbackTriedRef.current = currentSong.id;
+                fetchSongDetail({ ...currentSong, url: '', isDetailsLoaded: false }).then((detailed) => {
+                    if (detailed.url && detailed.id === currentSong.id) {
+                        executePlay(detailed);
+                    }
+                }).catch(() => { });
+            }
         });
 
         return () => {
@@ -229,6 +239,42 @@ export const useAudioPlayer = () => {
             audio.pause();
         }
     }, [isPlaying, currentSong]);
+
+    // 定时落库，防止长时间播放未切歌时只记录一次
+    useEffect(() => {
+        if (!isPlaying || !currentSong) return;
+
+        const timer = setInterval(() => {
+            const s = statRef.current;
+            if (!s.songId || s.songId !== currentSong.id) return;
+            const played = Math.floor(s.played);
+            if (played >= 3) {
+                addListenRecord(currentSong, played);
+                beginStat(currentSong); // 重置计时，继续累积
+            }
+        }, 15000); // 每 15 秒尝试一次
+
+        return () => clearInterval(timer);
+    }, [isPlaying, currentSong]);
+
+    // Flush listen duration when page is hidden/unloaded to avoid losing the last few seconds
+    useEffect(() => {
+        const handleVisibility = () => {
+            if (document.hidden) flushStat();
+        };
+        const handlePageHide = () => flushStat();
+
+        window.addEventListener('visibilitychange', handleVisibility);
+        window.addEventListener('pagehide', handlePageHide);
+        window.addEventListener('beforeunload', handlePageHide);
+
+        return () => {
+            window.removeEventListener('visibilitychange', handleVisibility);
+            window.removeEventListener('pagehide', handlePageHide);
+            window.removeEventListener('beforeunload', handlePageHide);
+            flushStat();
+        };
+    }, [flushStat]);
 
     // 控制函数
     const playSong = (song: Song) => {

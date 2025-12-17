@@ -190,3 +190,26 @@ export const saveImportedPlaylist = async (playlist: Playlist): Promise<boolean>
     await savePlaylists(list);
     return true;
 };
+
+// 判断歌曲是否已在“我喜欢”
+export const isSongInFavorites = async (songId: string): Promise<boolean> => {
+    if (!songId) return false;
+    const list = await getUserPlaylists();
+    const fav = list.find(p => p.title === FAVORITE_PLAYLIST_TITLE);
+    return !!fav?.songs?.some((s) => s.id === songId);
+};
+
+// 从“我喜欢”移除
+export const removeSongFromFavorites = async (songId: string): Promise<boolean> => {
+    if (!songId) return false;
+    const list = await getUserPlaylists();
+    const fav = list.find(p => p.title === FAVORITE_PLAYLIST_TITLE);
+    if (!fav || !fav.songs) return false;
+    const before = fav.songs.length;
+    fav.songs = fav.songs.filter(s => s.id !== songId);
+    fav.songCount = fav.songs.length;
+    fav.updatedAt = Date.now();
+    if (fav.songs.length === 0) fav.coverUrl = '';
+    await savePlaylists(list);
+    return fav.songs.length !== before;
+};

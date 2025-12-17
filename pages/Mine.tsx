@@ -3,13 +3,15 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Settings, Heart, Clock, Plus,
   BarChart3, User, ChevronRight,
-  Download, FolderOpen, LogIn, UserCog, ChevronDown, ChevronUp, Globe, Import, Loader2
+  Download, LogIn, UserCog, ChevronDown, ChevronUp, Import, Loader2,
+  Gift
 } from 'lucide-react';
 import { Playlist } from '../types';
 import {
   getUserPlaylists, createUserPlaylist, saveImportedPlaylist
 } from '../utils/playlistStore';
-import { getListenRecords } from '../utils/db';
+import { getListenRecords, ListenRecord } from '../utils/db';
+import { formatDuration } from '../utils/time';
 import { fetchQQPlaylist, fetchKuwoPlaylist } from '../utils/api'; // ✅ 引入 fetchKuwoPlaylist
 
 /* ================= Props ================= */
@@ -20,6 +22,7 @@ interface MineProps {
   onNavigateRecent?: () => void;
   onNavigateChart?: () => void;
   onNavigateLocal?: () => void;
+  onNavigateCheckIn?: () => void;
 }
 
 /* ================= 页面 ================= */
@@ -29,11 +32,12 @@ const Mine: React.FC<MineProps> = ({
   onNavigateSettings,
   onNavigateRecent,
   onNavigateChart,
-  onNavigateLocal
+  onNavigateLocal,
+  onNavigateCheckIn
 }) => {
   /* ---------- 状态 ---------- */
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [records, setRecords] = useState<any[]>([]);
+  const [records, setRecords] = useState<ListenRecord[]>([]);
 
   // Stats Collapse State
   const [isStatsExpanded, setIsStatsExpanded] = useState(true);
@@ -109,9 +113,10 @@ const Mine: React.FC<MineProps> = ({
     return result;
   }, [records]);
 
-  const totalListenMinutes = useMemo(() => {
-    return Math.round(records.reduce((acc, cur) => acc + cur.playedSeconds, 0) / 60);
+  const totalListenSeconds = useMemo(() => {
+    return records.reduce((acc, cur) => acc + (cur.playedSeconds || 0), 0);
   }, [records]);
+  const totalListenText = useMemo(() => formatDuration(totalListenSeconds), [totalListenSeconds]);
 
   /* ================= 行为 ================= */
   const createPlaylist = async () => {
@@ -206,7 +211,7 @@ const Mine: React.FC<MineProps> = ({
               </h1>
               <div className="flex gap-3 mt-2 text-xs text-slate-500">
                 <span><b className="text-white">{playlists.length}</b> 歌单</span>
-                <span><b className="text-white">{totalListenMinutes}</b> 分钟</span>
+                <span><b className="text-white">{totalListenText}</b> 听歌</span>
               </div>
             </div>
           </div>
@@ -279,15 +284,18 @@ const Mine: React.FC<MineProps> = ({
         </div>
 
         <div
-          onClick={() => window.webapp?.toast?.('福利中心即将上线')}
+          onClick={() => {
+            if (onNavigateCheckIn) onNavigateCheckIn();
+            else window.webapp?.toast?.('请前往签到/福利页面查看');
+          }}
           className="bg-slate-800/40 p-4 rounded-2xl flex items-center gap-3 cursor-pointer shadow-sm hover:shadow-md transition-all border border-white/5 group"
         >
-          <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
+          <div className="w-10 h-10 rounded-full bg-orange-500/10 flex items-center justify-center text-orange-500 group-hover:scale-110 transition-transform">
             <Gift size={20} />
           </div>
           <div>
             <div className="text-white font-bold text-sm">福利中心</div>
-            <div className="text-xs text-slate-500">签到 · 权益 · 活动</div>
+            <div className="text-xs text-slate-500">权益活动</div>
           </div>
         </div>
       </div>
@@ -314,8 +322,8 @@ const Mine: React.FC<MineProps> = ({
                 <div>
                   <p className="text-xs text-slate-500 mb-1">最近30天</p>
                   <p className="text-xl font-bold text-white flex items-baseline gap-1">
-                    {totalListenMinutes}
-                    <span className="text-xs font-normal text-slate-400">分钟</span>
+                    {totalListenText}
+                    <span className="text-xs font-normal text-slate-400">累计</span>
                   </p>
                 </div>
                 <button

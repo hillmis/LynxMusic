@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Clock, PlayCircle, Trash2 } from 'lucide-react';
 import { Song } from '../types';
-import { getListenRecords, dbClearPlayHistory } from '../utils/db';
+import { getListenRecords, dbClearPlayHistory, ListenRecord } from '../utils/db';
+import { formatDuration } from '../utils/time';
 
 interface RecentProps {
     onBack: () => void;
@@ -14,17 +15,14 @@ const Recent: React.FC<RecentProps> = ({
     onPlaySong,
     onAddToQueue
 }) => {
-    const [records, setRecords] = useState<any[]>([]);
+    const [records, setRecords] = useState<ListenRecord[]>([]);
 
     useEffect(() => {
         loadData();
     }, []);
 
     const loadData = () => {
-        getListenRecords().then(list =>
-            // 按时间倒序排列
-            setRecords(list.sort((a, b) => b.ts - a.ts))
-        );
+        getListenRecords().then(setRecords);
     };
 
     const handleClearHistory = async () => {
@@ -35,9 +33,18 @@ const Recent: React.FC<RecentProps> = ({
         }
     };
 
+    const totalSeconds = useMemo(
+        () => records.reduce((acc, cur) => acc + (cur.playedSeconds || 0), 0),
+        [records]
+    );
+    const totalDurationText = useMemo(
+        () => formatDuration(totalSeconds, { keepSeconds: true }),
+        [totalSeconds]
+    );
+
     /** 分组逻辑：今天、昨天、更早 */
     const grouped = useMemo(() => {
-        const groups: { [key: string]: any[] } = {
+        const groups: { [key: string]: ListenRecord[] } = {
             '今天': [],
             '昨天': [],
             '更早': []
@@ -51,7 +58,6 @@ const Recent: React.FC<RecentProps> = ({
         const yesterdayStr = `${yesterday.getFullYear()}-${yesterday.getMonth() + 1}-${yesterday.getDate()}`;
 
         records.forEach(r => {
-            // 将 ts 转为日期字符串比较 (去掉前导0兼容处理)
             const d = new Date(r.ts);
             const dateStr = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 
@@ -64,7 +70,6 @@ const Recent: React.FC<RecentProps> = ({
             }
         });
 
-        // 过滤掉空组并按特定顺序返回
         return Object.entries(groups).filter(([_, list]) => list.length > 0);
     }, [records]);
 
@@ -81,9 +86,9 @@ const Recent: React.FC<RecentProps> = ({
     };
 
     return (
-        <div className="h-full  bg-slate-900  overflow-y-auto no-scrollbar pb-20 animate-in slide-in-from-right duration-300">
+        <div className="h-full bg-slate-900 overflow-y-auto no-scrollbar pb-20 animate-in slide-in-from-right duration-300">
             {/* 顶栏 */}
-            <div className="sticky top-0 z-10  bg-slate-900 /95 backdrop-blur-md p-4 border-b border-white/5 flex items-center justify-between">
+            <div className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur-md p-4 border-b border-white/5 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                     <button onClick={onBack} className="p-2 -ml-2 rounded-full hover:bg-white/10 text-white">
                         <ArrowLeft size={24} />
@@ -96,6 +101,21 @@ const Recent: React.FC<RecentProps> = ({
                     </button>
                 )}
             </div>
+
+            {records.length > 0 && (
+                <div className="px-4 pt-4">
+                    <div className="bg-slate-800/40 border border-white/5 rounded-2xl p-3 flex items-center justify-between">
+                        <div>
+                            <p className="text-xs text-slate-500">累计听歌时长</p>
+                            <p className="text-lg font-bold text-white mt-0.5">{totalDurationText}</p>
+                        </div>
+                        <div className="text-xs text-slate-500 text-right">
+                            <p className="text-white text-sm font-semibold">{records.length}</p>
+                            <p>条播放记录</p>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <div className="p-4">
                 {records.length === 0 ? (
@@ -117,7 +137,7 @@ const Recent: React.FC<RecentProps> = ({
                                             title: r.title,
                                             artist: r.artist,
                                             coverUrl: r.coverUrl,
-                                            url: '' // 需在播放时重新获取
+                                            url: '' // 需要在播放时重新获取
                                         };
 
                                         return (
@@ -140,7 +160,7 @@ const Recent: React.FC<RecentProps> = ({
                                                         <span className="mx-1">·</span>
                                                         {label === '更早' ? formatDate(r.ts) : formatTime(r.ts)}
                                                         <span className="mx-1">·</span>
-                                                        <span className="text-indigo-400/80">听了 {Math.ceil(r.playedSeconds / 60)} 分钟</span>
+                                                        <span className="text-indigo-400/80">听了 {formatDuration(r.playedSeconds, { keepSeconds: true })}</span>
                                                     </p>
                                                 </div>
                                             </div>

@@ -81,6 +81,22 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
 
     useEffect(() => {
         isMountedRef.current = true;
+
+        // 封面缓存 key
+        const coverCacheKey = 'hm_playlist_cover_cache_v1';
+        const COVER_TTL = 6 * 60 * 60 * 1000;
+
+        const readCover = () => {
+            try {
+                const raw = sessionStorage.getItem(coverCacheKey);
+                if (!raw) return {};
+                return JSON.parse(raw);
+            } catch { return {}; }
+        };
+        const writeCover = (cache: any) => {
+            try { sessionStorage.setItem(coverCacheKey, JSON.stringify(cache)); } catch { }
+        };
+
         const run = async () => {
             setLoading(true);
             try {
@@ -88,22 +104,23 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                     const fetched = await getDynamicPlaylist(playlist.apiKeyword);
                     if (!isMountedRef.current) return;
                     setSongs(fetched);
-                    setLoading(false);
-                    // 渐进式加载详情
-                    for (let i = 0; i < fetched.length; i++) {
-                        if (!isMountedRef.current) break;
-                        if (fetched[i].isDetailsLoaded) continue;
-                        try {
-                            const detail = await fetchSongDetail(fetched[i]);
-                            if (!isMountedRef.current) break;
-                            setSongs((prev) => {
-                                const next = [...prev];
-                                if (next[i]?.id === detail.id) next[i] = detail;
-                                return next;
-                            });
-                            await sleep(40);
-                        } catch (e) { }
+
+                    // 尝试封面缓存
+                    const cache = readCover();
+                    const cached = cache[playlist.id];
+                    if (cached && Date.now() - cached.ts < COVER_TTL) {
+                        setPlaylistData(p => ({ ...p, coverUrl: cached.cover || p.coverUrl }));
+                    } else {
+                        const coverCandidates = fetched.slice(0, 3);
+                        const detailed = await Promise.all(coverCandidates.map(s => fetchSongDetail(s).catch(() => s)));
+                        const cover = detailed.find(s => s.coverUrl)?.coverUrl || fetched[0]?.coverUrl;
+                        if (cover) {
+                            setPlaylistData(p => ({ ...p, coverUrl: cover }));
+                            cache[playlist.id] = { cover, ts: Date.now() };
+                            writeCover(cache);
+                        }
                     }
+                    setLoading(false);
                 } else {
                     await loadFromDB();
                     if (!isMountedRef.current) return;

@@ -390,6 +390,7 @@ const Playing: React.FC<PlayingProps> = ({
                 autoPlay={isPlaying}
                 onEnded={() => setVideoState(prev => ({ ...prev, isPlaying: false }))}
                 controls={false}
+                poster=""
               />
             ) : (
               <div className="flex flex-col items-center text-white/50">

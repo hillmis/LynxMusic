@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Song } from '../types';
-import { getUserPlaylists, addSongToPlaylist, createUserPlaylist, FAVORITE_PLAYLIST_TITLE } from '../utils/playlistStore';
+import { getUserPlaylists, addSongToPlaylist, createUserPlaylist, FAVORITE_PLAYLIST_TITLE, isSongInFavorites, removeSongFromFavorites } from '../utils/playlistStore';
 import { saveDownloadedSong, blobToBase64 } from '../utils/fileSystem';
 import { dbSaveLocalSong } from '../utils/db';
 
@@ -42,17 +42,26 @@ export const useSongActions = (deps: Deps = {}) => {
         toast('已添加到播放队列');
     };
 
-    const handleAddToFavorites = async (song: Song) => {
+    const handleAddToFavorites = async (song: Song): Promise<boolean> => {
         try {
             const playlists = await getUserPlaylists();
             let fav = playlists.find(p => p.title === FAVORITE_PLAYLIST_TITLE);
             if (!fav) fav = await createUserPlaylist(FAVORITE_PLAYLIST_TITLE);
 
+            const already = await isSongInFavorites(song.id);
+            if (already) {
+                const removed = await removeSongFromFavorites(song.id);
+                toast(removed ? '已取消喜欢' : '取消失败');
+                return false;
+            }
+
             const ok = await addSongToPlaylist(fav.id, song);
             toast(ok ? `已添加到“${FAVORITE_PLAYLIST_TITLE}”` : '歌曲已在列表');
+            return !!ok;
         } catch (e) {
             console.error(e);
             toast('操作失败');
+            return false;
         }
     };
 

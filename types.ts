@@ -53,6 +53,9 @@ export interface Song {
 
   // 歌单
   addedAt?: number;
+
+  // 歌词
+  lyric?: string;
 }
 
 export interface Playlist {
@@ -102,4 +105,5 @@ export type SubView =
   | { type: 'SEE_ALL_PLAYLISTS' }
   | { type: 'CHART_DETAIL'; title: string; gradient: string; chartId: string }
   | { type: 'SETTINGS' }
+  | { type: 'STATISTIC_DETAIL' }
   | { type: 'RECENT' };

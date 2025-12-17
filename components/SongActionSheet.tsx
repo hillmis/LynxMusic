@@ -9,7 +9,7 @@ interface Props {
     onClose: () => void;
     song: Song | null;
 
-    onAddToFavorites?: (song: Song) => void;
+    onAddToFavorites?: (song: Song) => Promise<boolean> | boolean | void;
     onAddToQueue?: (song: Song) => void;
     onAddToPlaylist?: (playlistId: string, song: Song) => void;
     onCreatePlaylistAndAdd?: (title: string, song: Song) => Promise<any> | any;
@@ -56,9 +56,17 @@ export default function SongActionSheet({
 
     if (!open || !song) return null;
 
-    const handleAction = (action?: (s: Song) => void) => {
+    const handleAction = (action?: (s: Song) => any) => {
         if (typeof action === 'function') {
             action(song);
+        }
+        onClose();
+    };
+
+    const handleFavoriteClick = async () => {
+        if (onAddToFavorites && song) {
+            const res = await onAddToFavorites(song);
+            if (typeof res === 'boolean') setIsFavorite(res);
         }
         onClose();
     };
@@ -94,13 +102,7 @@ export default function SongActionSheet({
                         <span className="text-[10px]  text-slate-300">下一首</span>
                     </button>
                     <button
-                        onClick={() => {
-                            if (onAddToFavorites && song) {
-                                onAddToFavorites(song);
-                                setIsFavorite(true);
-                            }
-                            onClose();
-                        }}
+                        onClick={handleFavoriteClick}
                         className="flex flex-col items-center gap-2 p-3 rounded-2xl bg-slate-800/50 hover:bg-slate-800 active:scale-95 transition-all"
                     >
                         <Heart size={22} className={isFavorite ? 'text-red-500 fill-red-500' : 'text-red-400'} />

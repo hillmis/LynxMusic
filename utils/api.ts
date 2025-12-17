@@ -53,19 +53,23 @@ export const searchMusic = async (keyword: string): Promise<Song[]> => {
         const response = await fetch(listUrl);
         const data = await response.json();
         if (data.code === 200 && Array.isArray(data.data)) {
-            return data.data.map((item: any, index: number) => ({
-                id: `api_${item.song_mid || item.songid || index}_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-                title: item.song_name || item.song_title || '未知歌曲',
-                artist: item.song_singer || '未知歌手',
-                album: item.album_name || '在线音乐',
-                coverUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&q=80',
-                duration: 0,
-                url: '',
-                quality: item.quality || 'SQ无损',
-                apiKeyword: keyword,
-                originalIndex: index + 1,
-                isDetailsLoaded: false
-            }));
+            return data.data.map((item: any, index: number) => {
+                const title = item.song_name || item.song_title || '未知歌曲';
+                const artist = item.song_singer || '未知歌手';
+                return {
+                    id: `api_${item.song_mid || item.songid || index}_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+                    title,
+                    artist,
+                    album: item.album_name || '在线音乐',
+                    coverUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&q=80',
+                    duration: 0,
+                    url: '',
+                    quality: item.quality || 'SQ无损',
+                    apiKeyword: `${title} ${artist}`,
+                    originalIndex: index + 1,
+                    isDetailsLoaded: false
+                };
+            });
         }
         return [];
     } catch (error) { return []; }
@@ -79,8 +83,8 @@ export const fetchSongDetail = async (song: Song): Promise<Song> => {
 
     const cleanHost = host.replace(/\/$/, '');
 
-    // 构造搜索关键词
-    const searchMsg = song.apiKeyword || `${song.title} ${song.artist}`;
+    // 构造搜索关键词：优先“歌名+歌手”
+    const searchMsg = `${song.title || ''} ${song.artist || ''}`.trim() || song.apiKeyword || song.title || '';
     const nValue = song.originalIndex || 1;
 
     const url = `${cleanHost}/QQmusic/?key=${key}&n=${nValue}&num=60&type=json&msg=${encodeURIComponent(searchMsg)}`;
@@ -107,6 +111,10 @@ export const fetchSongDetail = async (song: Song): Promise<Song> => {
                 quality: detailData.quality || song.quality,
                 isDetailsLoaded: true
             };
+        }
+        // 尝试备用搜索：强制使用歌名+歌手
+        if (searchMsg !== song.apiKeyword && (song.title || song.artist)) {
+            return await fetchSongDetail({ ...song, apiKeyword: `${song.title || ''} ${song.artist || ''}`, originalIndex: 1 });
         }
         return song;
     } catch (error) {

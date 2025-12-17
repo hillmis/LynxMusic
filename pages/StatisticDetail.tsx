@@ -6,6 +6,7 @@ import {
     ResponsiveContainer, BarChart, Bar, XAxis, Tooltip, Cell, LineChart, Line, Pie, AreaChart, Area
 } from 'recharts';
 import { getListenRecords } from '../utils/db';
+import { formatDuration } from '../utils/time';
 
 interface ChartDetailProps {
     onBack?: () => void;
@@ -20,24 +21,22 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
 
     // --- 基础统计 ---
     const stats = useMemo(() => {
-        const totalSeconds = records.reduce((acc, cur) => acc + cur.playedSeconds, 0);
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const totalSeconds = records.reduce((acc, cur) => acc + (cur.playedSeconds || 0), 0);
 
         // 统计最常听
         const artistMap: Record<string, number> = {};
         const songMap: Record<string, number> = {};
 
         records.forEach(r => {
-            artistMap[r.artist] = (artistMap[r.artist] || 0) + 1;
-            songMap[r.title] = (songMap[r.title] || 0) + 1;
+            artistMap[r.artist] = (artistMap[r.artist] || 0) + r.playedSeconds;
+            songMap[r.title] = (songMap[r.title] || 0) + r.playedSeconds;
         });
 
         const topArtist = Object.entries(artistMap).sort((a, b) => b[1] - a[1])[0] || ['暂无', 0];
         const topSong = Object.entries(songMap).sort((a, b) => b[1] - a[1])[0] || ['暂无', 0];
 
         return {
-            totalTime: `${hours}小时${minutes}分`,
+            totalTime: formatDuration(totalSeconds),
             totalCount: records.length,
             topArtist: topArtist[0],
             topSong: topSong[0]
@@ -49,9 +48,9 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
         const arr = Array.from({ length: 24 }, (_, h) => ({ label: `${h}点`, value: 0 }));
         records.forEach(r => {
             const h = new Date(r.ts).getHours();
-            arr[h].value += 1;
+            arr[h].value += Math.max(0, (r.playedSeconds || 0) / 60);
         });
-        return arr;
+        return arr.map(item => ({ ...item, value: Math.round(item.value) }));
     }, [records]);
 
     // --- 图表数据：周趋势 (最近7天) ---

@@ -28,6 +28,8 @@ type CoverCache = Record<
   }
 >;
 
+const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 小时
+
 const readCoverCache = (): CoverCache => {
   try {
     return JSON.parse(sessionStorage.getItem(COVER_CACHE_KEY) || '{}');
@@ -56,9 +58,9 @@ const CARD_STYLES = [
 ];
 
 const BANNERS = [
-  { id: 1, image: 'https://picsum.photos/800/400?random=101', tag: '最新发布', title: '2024 夏日氛围感' },
-  { id: 2, image: 'https://picsum.photos/800/400?random=102', tag: '独家首发', title: '爵士慵懒之夜' },
-  { id: 3, image: 'https://picsum.photos/800/400?random=103', tag: '编辑精选', title: '赛博朋克：电子幻梦' }
+  { id: 1, image: 'https://picsum.photos/seed/hm_banner_101/800/400', tag: '最新发布', title: '2024 夏日氛围感' },
+  { id: 2, image: 'https://picsum.photos/seed/hm_banner_102/800/400', tag: '独家首发', title: '爵士慵懒之夜' },
+  { id: 3, image: 'https://picsum.photos/seed/hm_banner_103/800/400', tag: '编辑精选', title: '赛博朋克：电子幻梦' }
 ];
 
 /* =========================
@@ -81,11 +83,11 @@ const Home: React.FC<HomeProps> = ({
   onPlaySong,
   onNavigateCheckIn,
   onNavigatePlaylist,
-  onNavigateSeeAllSongs,
   onNavigateSeeAllPlaylists
 }) => {
   const [greeting, setGreeting] = useState('');
   const [recSongs, setRecSongs] = useState<Song[]>([]);
+   const [dailyPlaylist, setDailyPlaylist] = useState<Playlist | null>(null);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -97,34 +99,81 @@ const Home: React.FC<HomeProps> = ({
    * ========================= */
 
   const loadDailyRecommend = async () => {
+    const cacheKey = 'hm_daily_recommend_v1';
+    const cacheTTL = 60 * 60 * 1000; // 1 小时
+
+    const applyCache = (data: Song[]) => {
+      setRecSongs(data);
+      if (data.length > 0) {
+        const pl: Playlist = {
+          id: 'daily_recommend',
+          title: '每日推荐',
+          creator: 'HillMusic',
+          coverUrl: data[0]?.coverUrl || '',
+          songCount:30,
+          songs: data,
+          description: '每日自动生成的推荐歌单',
+          isLocal: false,
+        };
+        setDailyPlaylist(pl);
+      }
+    };
+
+    const fillDetails = (list: Song[]) => {
+      list.forEach(async (song, index) => {
+        try {
+          const detail = await fetchSongDetail(song);
+          if (!isMountedRef.current) return;
+          setRecSongs(prev => {
+            const next = [...prev];
+            if (next[index] && next[index].id === song.id) {
+              next[index] = { ...next[index], ...detail };
+            }
+            setDailyPlaylist(pl => pl ? { ...pl, songs: next, songCount: next.length, coverUrl: next[0]?.coverUrl || pl.coverUrl } : pl);
+            return next;
+          });
+        } catch { }
+      });
+    };
+
+    let cachedData: Song[] | null = null;
+    try {
+      const cacheRaw = sessionStorage.getItem(cacheKey);
+      if (cacheRaw) {
+        const cache = JSON.parse(cacheRaw);
+        if (Array.isArray(cache.data)) {
+          cachedData = cache.data;
+          applyCache(cache.data);
+          // 命中缓存也可以补全封面
+          if (Date.now() - cache.ts < cacheTTL) {
+            fillDetails(cache.data);
+            return;
+          }
+        }
+      }
+    } catch { }
+
     try {
       setLoading(true);
 
       const songs = await getDynamicPlaylist('热门');
       const top10 = songs.slice(0, 10);
 
-      // 先显示基础数据
       if (isMountedRef.current) {
-        setRecSongs(top10);
+        applyCache(top10);
       }
 
-      // 后台补全详情（封面 / 时长）
-      top10.forEach(async (song, index) => {
-        try {
-          const detail = await fetchSongDetail(song);
-          if (!isMountedRef.current) return;
+      fillDetails(top10);
 
-          setRecSongs(prev => {
-            const list = [...prev];
-            if (list[index] && list[index].id === song.id) {
-              list[index] = detail;
-            }
-            return list;
-          });
-        } catch { }
-      });
+      try {
+        sessionStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), data: top10 }));
+      } catch { }
     } catch (e) {
       console.error('每日推荐加载失败', e);
+      // 失败时回退到缓存数据
+      if (cachedData?.length) {
+        applyCache(cachedData);
+      }
     } finally {
       if (isMountedRef.current) setLoading(false);
     }
@@ -143,7 +192,7 @@ const Home: React.FC<HomeProps> = ({
     const cache = readCoverCache();
     const cached = cache[pl.id];
 
-    if (cached && Date.now() - cached.ts < 30 * 60 * 1000) {
+    if (cached && Date.now() - cached.ts < CACHE_TTL) {
       setPlaylists(prev =>
         prev.map(p => (p.id === pl.id ? { ...p, coverImgStack: cached.covers } : p))
       );
@@ -203,10 +252,10 @@ const Home: React.FC<HomeProps> = ({
 
     setPlaylists(initPlaylists);
 
-    // 后台加载歌单封面
+    // 后台加载歌单封面（有缓存则直接使用，TTL 由 loadPlaylistCovers 控制）
     initPlaylists.slice(0, 6).forEach(loadPlaylistCovers);
 
-    // ✅ 关键：加载每日推荐
+    // ✅ 关键：加载每日推荐（首屏/刷新触发一次，之后命中缓存）
     loadDailyRecommend();
 
     return () => {
@@ -238,13 +287,18 @@ const Home: React.FC<HomeProps> = ({
       {/* Banner */}
       <div className="px-6 mb-8 relative h-48">
         <Swiper
-          modules={[Autoplay, Pagination]}
-          slidesPerView={1}
-          loop
-          autoplay={{ delay: 4000, disableOnInteraction: false }}
-          pagination={{ clickable: true }}
-          className="w-full h-full rounded-2xl"
-        >
+  modules={[Autoplay, Pagination]}
+  slidesPerView={1}
+  loop
+  autoplay={{ delay: 4000, disableOnInteraction: false }}
+  pagination={{ 
+    clickable: true,
+    renderBullet: function (index, className) {
+      return `<span class="${className}" style="background-color: ${index ? '#9CA3AF' : 'rgba(255,255,255,0.5)'}; width: 5px; height: 5px; margin: 0 4px;"></span>`;
+    }
+  }}
+  className="w-full h-full rounded-2xl"
+>
           {BANNERS.map(banner => (
             <SwiperSlide key={banner.id}>
               <div className="relative w-full h-full">
@@ -268,8 +322,9 @@ const Home: React.FC<HomeProps> = ({
         <div className="flex items-center justify-between px-6 mb-4">
           <h2 className="text-lg font-bold text-slate-800 text-white ">每日推荐</h2>
           <button
-            onClick={onNavigateSeeAllSongs}
+            onClick={() => dailyPlaylist && onNavigatePlaylist(dailyPlaylist)}
             className="text-xs text-indigo-400 flex items-center"
+            disabled={!dailyPlaylist}
           >
             查看全部 <ChevronRight size={14} />
           </button>

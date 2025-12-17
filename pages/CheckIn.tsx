@@ -54,7 +54,7 @@ const CheckIn: React.FC<CheckInProps> = ({ onBack }) => {
                     <div className="absolute -right-6 -top-6 opacity-20">
                         <Gift size={140} className="text-white rotate-12" />
                     </div>
-                    <div className="relative z-10">
+                    <div className="relative">
                         <div className="flex items-center gap-2 mb-1 opacity-90">
                             <Coins size={16} className="text-yellow-300" />
                             <span className="text-indigo-100 text-sm font-medium">我的积分</span>

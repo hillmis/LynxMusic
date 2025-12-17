@@ -1,4 +1,5 @@
 import { Playlist, Song } from './types';
+import { saveBackupToFile } from './fileSystem';
 
 const DB_NAME = 'HillMusicDB';
 const DB_VERSION = 3;
@@ -159,6 +160,7 @@ export const dbAppendPlayHistory = async (song: Song, playedSeconds: number, ts 
         source: (song as any).source
     };
     await putItem(STORE_PLAY_HISTORY, rec);
+    maybeAutoBackup();
 };
 
 export const dbGetAllPlayHistory = () => getAllItems<PlayHistoryRecord>(STORE_PLAY_HISTORY);
@@ -247,6 +249,24 @@ export const importFullData = async (
     }
 };
 
+const AUTO_BACKUP_INTERVAL = 6 * 60 * 60 * 1000; // 6 小时
+const AUTO_BACKUP_KEY = 'hm_auto_backup_ts';
+
+async function maybeAutoBackup() {
+    try {
+        const last = Number(localStorage.getItem(AUTO_BACKUP_KEY) || 0);
+        if (Date.now() - last < AUTO_BACKUP_INTERVAL) return;
+
+        const data = await exportFullData();
+        const ok = saveBackupToFile(data);
+        if (ok) {
+            localStorage.setItem(AUTO_BACKUP_KEY, String(Date.now()));
+        }
+    } catch (e) {
+        console.warn('Auto backup failed', e);
+    }
+}
+
 export const clearDatabase = async () => {
     const db = await openDB();
     const tx = db.transaction([STORE_PLAYLISTS, STORE_PLAY_HISTORY], 'readwrite');
@@ -259,5 +279,11 @@ export const addListenRecord = async (song: Song, playedSeconds: number, ts = Da
 };
 
 export const getListenRecords = async (): Promise<ListenRecord[]> => {
-    return dbGetAllPlayHistory();
+    const list = await dbGetAllPlayHistory();
+    return list
+        .map((item) => ({
+            ...item,
+            playedSeconds: Math.max(0, Math.floor(Number(item.playedSeconds) || 0))
+        }))
+        .sort((a, b) => b.ts - a.ts);
 };
