@@ -19,6 +19,8 @@ const Recent: React.FC<RecentProps> = ({
 
     useEffect(() => {
         loadData();
+        window.addEventListener('listen-history-updated', loadData);
+        return () => window.removeEventListener('listen-history-updated', loadData);
     }, []);
 
     const loadData = () => {
@@ -41,6 +43,10 @@ const Recent: React.FC<RecentProps> = ({
         () => formatDuration(totalSeconds, { keepSeconds: true }),
         [totalSeconds]
     );
+    const artistCount = useMemo(() => {
+        const set = new Set(records.map(r => r.artist).filter(Boolean));
+        return set.size;
+    }, [records]);
 
     /** 分组逻辑：今天、昨天、更早 */
     const grouped = useMemo(() => {
@@ -110,8 +116,8 @@ const Recent: React.FC<RecentProps> = ({
                             <p className="text-lg font-bold text-white mt-0.5">{totalDurationText}</p>
                         </div>
                         <div className="text-xs text-slate-500 text-right">
-                            <p className="text-white text-sm font-semibold">{records.length}</p>
-                            <p>条播放记录</p>
+                            <p className="text-white text-sm font-semibold">{artistCount}</p>
+                            <p>歌手数</p>
                         </div>
                     </div>
                 </div>

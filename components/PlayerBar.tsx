@@ -13,7 +13,7 @@ const PlayerBar: React.FC<PlayerBarProps> = ({ song, isPlaying, onTogglePlay, on
   return (
     <div
       onClick={onExpand}
-      className="absolute bottom-[80px] left-4 right-4 h-16 bg-[#1e293b]/90 backdrop-blur-md rounded-2xl flex items-center px-4 shadow-xl border border-white/5 cursor-pointer z-40 transform hover:scale-[1.02] transition-transform"
+      className="absolute bottom-[80px] left-4 right-4 h-16 bg-neutral-900/90 backdrop-blur-md rounded-2xl flex items-center px-4 shadow-xl border border-white/5 cursor-pointer z-40 transform hover:scale-[1.02] transition-transform"
     >
       {/* Rotating Thumb */}
       <div className={`w-10 h-10 rounded-full overflow-hidden border border-slate-600 ${isPlaying ? 'animate-[spin_4s_linear_infinite]' : ''}`}>
@@ -38,11 +38,12 @@ const PlayerBar: React.FC<PlayerBarProps> = ({ song, isPlaying, onTogglePlay, on
       </div>
 
       {/* Progress Line (Fake) */}
-      <div className="absolute bottom-0 left-4 right-4 h-[2px] bg-slate-700/50 rounded-full overflow-hidden">
-        <div className="h-full bg-indigo-500 w-1/3 animate-pulse"></div>
+      <div className="absolute bottom-0 left-4 right-4 h-[2px] bg-neutral-700/50 rounded-full overflow-hidden">
+        <div className="h-full bg-neutral-500 w-1/3 animate-pulse"></div>
       </div>
     </div>
   );
 };
 
 export default PlayerBar;
+

@@ -77,7 +77,7 @@ export interface Playlist {
   updatedAt?: number;
 
   // ✅ 修改：添加 'kuwo'
-  source?: 'local' | 'qq' | 'kw' | 'wy';
+  source?: 'local' | 'qq' | 'kw' | 'wy' | 'kg';
 }
 
 export interface Task {
