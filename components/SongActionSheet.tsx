@@ -76,7 +76,7 @@ export default function SongActionSheet({
     };
 
     return (
-        <div className="fixed inset-0 z-[9999]">
+        <div className="fixed inset-0 z-[9999] swiper-no-swiping ">
             <div className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity" onClick={onClose} />
 
             <div className="absolute left-0 right-0 bottom-0  bg-slate-900  rounded-t-3xl border-tborder-white/10 p-5 animate-in slide-in-from-bottom-10 duration-200 safe-area-bottom max-h-[80vh] flex flex-col shadow-2xl">
