@@ -4,7 +4,8 @@ import { Song } from '../types';
 import {
   ChevronDown, Play, Pause, Repeat, Repeat1, Shuffle, Heart, ListMusic,
   MoreHorizontal, Tv, Music, X, Volume2, Trash2, Download, Loader2,
-  ChevronLeft, ChevronRight, Maximize2
+  ChevronLeft, ChevronRight, Maximize2,
+  MoreVertical
 } from 'lucide-react';
 import 'swiper/css';
 import { useSongActions } from '../hooks/useSongActions';
@@ -319,7 +320,7 @@ const Playing: React.FC<PlayingProps> = ({
       </div>
 
       {/* 中间内容区 */}
-      <div className="relative z-10 flex-1 flex flex-col justify-center items-center w-full overflow-hidden min-h-0" onClick={toggleLyricsDisplay}>
+      <div className="relative z-10 flex-1 flex flex-col justify-center items-center w-full  min-h-0" onClick={toggleLyricsDisplay}>
         {viewMode === 'music' ? (
           !showLyrics ? (
             <div className="w-full flex items-center justify-center animate-in zoom-in duration-500 px-6">
@@ -445,6 +446,12 @@ const Playing: React.FC<PlayingProps> = ({
               className={`transition-transform active:scale-110 ${isFavorite ? 'text-red-500' : 'text-white/60'}`}
             >
               <Heart size={24} className={isFavorite ? 'fill-current' : ''} />
+            </button>
+              <button
+              onClick={() => setActionOpen(true)}
+              className="transition-transform active:scale-110 text-white/60"
+            >
+              <MoreVertical size={24} />
             </button>
           </div>
         </div>

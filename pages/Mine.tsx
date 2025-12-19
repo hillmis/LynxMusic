@@ -13,7 +13,7 @@ import {
 import { getListenRecords, ListenRecord } from '../utils/db';
 import { formatDuration } from '../utils/time';
 import { getOnlinePlaylistConfigList, readOnlinePlaylistFavorites, writeOnlinePlaylistFavorites, ONLINE_PLAYLIST_FAVORITES_EVENT } from '../utils/onlinePlaylistFavorites';
-import { fetchQQPlaylist, fetchKuwoPlaylist, fetchWangyiPlaylist, fetchKugouPlaylist } from '../utils/api'; // 鉁?寮曞叆 fetchKuwoPlaylist
+import { fetchQQPlaylist, fetchKuwoPlaylist, fetchWangyiPlaylist, fetchKugouPlaylist } from '../utils/api'; // ✅ 引入 fetchKuwoPlaylist
 
 const PREVIEW_COVER_CACHE_KEY = 'hm_preview_covers_v1';
 const readPreviewCovers = (): Record<string, string[]> => {
@@ -45,7 +45,7 @@ interface MineProps {
   onNavigateCheckIn?: () => void;
 }
 
-/* ================= 椤甸潰 ================= */
+/* ================= 页面 ================= */
 
 const Mine: React.FC<MineProps> = ({
   onNavigatePlaylist,
@@ -55,7 +55,7 @@ const Mine: React.FC<MineProps> = ({
   onNavigateLocal,
   onNavigateCheckIn
 }) => {
-  /* ---------- 鐘舵€?---------- */
+  /* ---------- 状态 ---------- */
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [records, setRecords] = useState<ListenRecord[]>([]);
   const [favoriteOnlineIds, setFavoriteOnlineIds] = useState<Set<string>>(new Set());
@@ -78,14 +78,14 @@ const Mine: React.FC<MineProps> = ({
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
 
-  // 鉁?Import Dialog State
+  // ✅ Import Dialog State
   const [showImport, setShowImport] = useState(false);
-  // 鉁?淇敼锛歩mportSource 绫诲瀷鍖呭惈 'kuwo'
+  // ✅ 修改：importSource 类型包含 'kuwo'
   const [importSource, setImportSource] = useState<'qq' | 'wyy' | 'kuwo' | 'kugou'>('qq');
   const [importId, setImportId] = useState('');
   const [importing, setImporting] = useState(false);
 
-  /* ================= 鍒濆鍖?& 鍔犺浇 ================= */
+  /* ================= 初始化 & 加载 ================= */
 
   useEffect(() => {
     const user = localStorage.getItem('user_token');
@@ -115,10 +115,10 @@ const Mine: React.FC<MineProps> = ({
     };
   }, []);
 
-  const favorite = useMemo(() => playlists.find(p => p.title === '鎴戝枩娆?), [playlists]);
-  const otherPlaylists = useMemo(() => playlists.filter(p => p.title !== '鎴戝枩娆?), [playlists]);
+  const favorite = useMemo(() => playlists.find(p => p.title === '我喜欢'), [playlists]);
+  const otherPlaylists = useMemo(() => playlists.filter(p => p.title !== '我喜欢'), [playlists]);
 
-  /* ================= 缁熻閫昏緫 ================= */
+  /* ================= 统计逻辑 ================= */
   const heatmapData = useMemo(() => {
     const days = 30; // 6 cols * 5 rows = 30 days
     const result = [];
@@ -159,7 +159,7 @@ const Mine: React.FC<MineProps> = ({
   }, [records]);
   const totalListenText = useMemo(() => formatDuration(totalListenSeconds), [totalListenSeconds]);
 
-  /* ================= 琛屼负 ================= */
+  /* ================= 行为 ================= */
   const createPlaylist = async () => {
     if (!newName.trim()) return;
     await createUserPlaylist(newName.trim());
@@ -167,11 +167,11 @@ const Mine: React.FC<MineProps> = ({
     setShowCreate(false);
   };
 
-  // 鉁?澶勭悊姝屽崟瀵煎叆
+  // ✅ 处理歌单导入
   const handleImportPlaylist = async () => {
     const id = importId.trim();
     if (!id) {
-      window.webapp?.toast?.('璇疯緭鍏ユ瓕鍗旾D');
+      window.webapp?.toast?.('请输入歌单ID');
       return;
     }
 
@@ -179,7 +179,7 @@ const Mine: React.FC<MineProps> = ({
     let playlist = null;
 
     try {
-      // 鉁?鍖哄垎鏉ユ簮
+      // ✅ 区分来源
       if (importSource === 'qq') {
         playlist = await fetchQQPlaylist(id);
       } else if (importSource === 'kuwo') {
@@ -189,21 +189,21 @@ const Mine: React.FC<MineProps> = ({
       } else if (importSource === 'kugou') {
         playlist = await fetchKugouPlaylist(id);
       } else {
-        window.webapp?.toast?.('璇ュ钩鍙版殏鏈敮鎸?);
+        window.webapp?.toast?.('该平台暂未支持');
         setImporting(false);
         return;
       }
 
       if (playlist) {
         await saveImportedPlaylist(playlist);
-        window.webapp?.toast?.(`鎴愬姛瀵煎叆: ${playlist.title}`);
+        window.webapp?.toast?.(`成功导入: ${playlist.title}`);
         setShowImport(false);
         setImportId('');
       } else {
-        window.webapp?.toast?.('瀵煎叆澶辫触锛岃妫€鏌D鏄惁姝ｇ‘');
+        window.webapp?.toast?.('导入失败，请检查ID是否正确');
       }
     } catch (e) {
-      window.webapp?.toast?.('缃戠粶閿欒锛岃绋嶅悗閲嶈瘯');
+      window.webapp?.toast?.('网络错误，请稍后重试');
     } finally {
       setImporting(false);
     }
@@ -215,13 +215,13 @@ const Mine: React.FC<MineProps> = ({
     if (cfg.type === 'qq_id') {
       if (openingOnlineId) return;
       setOpeningOnlineId(cfg.id);
-      window.webapp?.toast?.('姝ｅ湪鑾峰彇姝屽崟...');
+      window.webapp?.toast?.('正在获取歌单...');
       try {
         const pl = await fetchQQPlaylist(cfg.key);
         if (pl) onNavigatePlaylist(pl);
-        else window.webapp?.toast?.('鑾峰彇姝屽崟澶辫触');
+        else window.webapp?.toast?.('获取歌单失败');
       } catch (e) {
-        window.webapp?.toast?.('缃戠粶閿欒锛岃绋嶅悗閲嶈瘯');
+        window.webapp?.toast?.('网络错误，请稍后重试');
       } finally {
         setOpeningOnlineId(null);
       }
@@ -234,7 +234,7 @@ const Mine: React.FC<MineProps> = ({
       creator: 'HillMusic',
       coverUrl: '',
       songCount: 50,
-      description: `绮鹃€夊叏缃?{cfg.name}锛屽疄鏃舵洿鏂癭,
+      description: `精选全网${cfg.name}，实时更新`,
       apiKeyword: cfg.key,
       isLocal: false,
       source: 'qq'
@@ -246,10 +246,10 @@ const Mine: React.FC<MineProps> = ({
     const next = new Set(favoriteOnlineIds);
     if (next.has(cfgId)) {
       next.delete(cfgId);
-      window.webapp?.toast?.('宸插彇娑堟敹钘?);
+      window.webapp?.toast?.('已取消收藏');
     } else {
       next.add(cfgId);
-      window.webapp?.toast?.('宸叉敹钘忔瓕鍗?);
+      window.webapp?.toast?.('已收藏歌单');
     }
     setFavoriteOnlineIds(next);
     writeOnlinePlaylistFavorites(next);
@@ -259,17 +259,21 @@ const Mine: React.FC<MineProps> = ({
     return favoriteOnlineCovers[`dp_all_${cfgId}`] || [];
   };
 
+  const getPlaylistCover = (playlist: Playlist) => {
+    return playlist.coverUrl || playlist.coverImgStack?.[0] || playlist.songs?.[0]?.coverUrl || '';
+  };
+
   const handleLogin = () => {
     localStorage.setItem('user_token', 'mock_token');
     setIsLoggedIn(true);
-    window.webapp?.toast?.('鐧诲綍鎴愬姛 (妯℃嫙)');
+    window.webapp?.toast?.('登录成功 (模拟)');
   };
 
   const handleLogout = () => {
-    if (!confirm('纭畾閫€鍑虹櫥褰曞悧锛?)) return;
+    if (!confirm('确定退出登录吗？')) return;
     localStorage.removeItem('user_token');
     setIsLoggedIn(false);
-    window.webapp?.toast?.('宸查€€鍑虹櫥褰?);
+    window.webapp?.toast?.('已退出登录');
   };
 
   // Helper for heatmap colors
@@ -289,7 +293,7 @@ const Mine: React.FC<MineProps> = ({
   return (
     <div className="h-full overflow-y-auto bg-[#0f172a] pb-32 no-scrollbar transition-colors">
 
-      {/* 1. 鐢ㄦ埛淇℃伅鍖哄煙 */}
+      {/* 1. 用户信息区域 */}
       <div className="pt-10 px-6 pb-8 bg-gradient-to-b from-indigo-900/40 to-[#0f172a] border-b border-transparent">
         <div className="flex justify-between items-start mb-6">
           <div className="flex items-center gap-4">
@@ -302,11 +306,11 @@ const Mine: React.FC<MineProps> = ({
             </div>
             <div>
               <h1 className="text-xl font-bold text-white flex items-center gap-2">
-                {isLoggedIn ? '娓稿' : '鏈櫥褰曠敤鎴?}
+                {isLoggedIn ? '游客' : '未登录用户'}
               </h1>
               <div className="flex gap-3 mt-2 text-xs text-slate-500">
-                <span><b className="text-white">{playlists.length}</b> 姝屽崟</span>
-                <span><b className="text-white">{totalListenText}</b> 鍚瓕</span>
+                <span><b className="text-white">{playlists.length}</b> 歌单</span>
+                <span><b className="text-white">{totalListenText}</b> 听歌</span>
               </div>
             </div>
           </div>
@@ -315,26 +319,26 @@ const Mine: React.FC<MineProps> = ({
           </button>
         </div>
 
-        {/* 鎿嶄綔鎸夐挳 */}
+        {/* 操作按钮 */}
         <div className="flex gap-3">
           {isLoggedIn ? (
             <>
               <button className="flex-1 bg-slate-800  text-slate-300 py-2.5 rounded-xl text-xs font-bold border border-white/5 active:scale-95 transition-transform flex items-center justify-center gap-2">
-                <UserCog size={14} /> 缂栬緫璧勬枡
+                <UserCog size={14} /> 编辑资料
               </button>
               <button onClick={handleLogout} className="flex-1 bg-slate-800 text-red-400 py-2.5 rounded-xl text-xs font-bold border border-white/5 active:scale-95 transition-transform flex items-center justify-center gap-2">
-                <LogOutIcon /> 閫€鍑虹櫥褰?
+                <LogOutIcon /> 退出登录
               </button>
             </>
           ) : (
             <button onClick={handleLogin} className="w-full bg-indigo-600 text-white py-3 rounded-xl text-sm font-bold shadow-lg shadow-indigo-900/20 active:scale-95 transition-transform flex items-center justify-center gap-2">
-              <LogIn size={16} /> 绔嬪嵆鐧诲綍
+              <LogIn size={16} /> 立即登录
             </button>
           )}
         </div>
       </div>
 
-      {/* 2. 蹇嵎鍏ュ彛 Grid */}
+      {/* 2. 快捷入口 Grid */}
       <div className="px-6 grid grid-cols-2 gap-3 mb-6 mt-6">
         <div
           onClick={() => favorite && onNavigatePlaylist(favorite)}
@@ -344,8 +348,8 @@ const Mine: React.FC<MineProps> = ({
             <Heart size={20} className="fill-current" />
           </div>
           <div>
-            <div className="text-white font-bold text-sm">鎴戝枩娆?/div>
-            <div className="text-xs text-slate-500">{favorite?.songCount || 0} 棣?/div>
+            <div className="text-white font-bold text-sm">我喜欢</div>
+            <div className="text-xs text-slate-500">{favorite?.songCount || 0} 首</div>
           </div>
         </div>
 
@@ -357,15 +361,15 @@ const Mine: React.FC<MineProps> = ({
             <Clock size={20} />
           </div>
           <div>
-            <div className="text-white font-bold text-sm">鏈€杩戞挱鏀?/div>
-            <div className="text-xs text-slate-500">鍚瓕璁板綍</div>
+            <div className="text-white font-bold text-sm">最近播放</div>
+            <div className="text-xs text-slate-500">听歌记录</div>
           </div>
         </div>
 
         <div
           onClick={() => {
             if (onNavigateLocal) onNavigateLocal();
-            else window.webapp?.toast?.('鏈湴闊充箰绠＄悊璇峰墠寰€"鏈湴"椤甸潰');
+            else window.webapp?.toast?.('本地音乐管理请前往"本地"页面');
           }}
           className="bg-slate-800/40 p-4 rounded-2xl flex items-center gap-3 cursor-pointer shadow-sm hover:shadow-md transition-all border border-white/5 group"
         >
@@ -373,15 +377,15 @@ const Mine: React.FC<MineProps> = ({
             <Download size={20} />
           </div>
           <div>
-            <div className="text-white font-bold text-sm">鏈湴涓嬭浇</div>
-            <div className="text-xs text-slate-500">宸茬紦瀛樻瓕鏇?/div>
+            <div className="text-white font-bold text-sm">本地下载</div>
+            <div className="text-xs text-slate-500">已缓存歌曲</div>
           </div>
         </div>
 
         <div
           onClick={() => {
             if (onNavigateCheckIn) onNavigateCheckIn();
-            else window.webapp?.toast?.('璇峰墠寰€绛惧埌/绂忓埄椤甸潰鏌ョ湅');
+            else window.webapp?.toast?.('请前往签到/福利页面查看');
           }}
           className="bg-slate-800/40 p-4 rounded-2xl flex items-center gap-3 cursor-pointer shadow-sm hover:shadow-md transition-all border border-white/5 group"
         >
@@ -389,13 +393,13 @@ const Mine: React.FC<MineProps> = ({
             <Gift size={20} />
           </div>
           <div>
-            <div className="text-white font-bold text-sm">绂忓埄涓績</div>
-            <div className="text-xs text-slate-500">鏉冪泭娲诲姩</div>
+            <div className="text-white font-bold text-sm">福利中心</div>
+            <div className="text-xs text-slate-500">权益活动</div>
           </div>
         </div>
       </div>
 
-      {/* 3. 鍚瓕缁熻 */}
+      {/* 3. 听歌统计 */}
       <div className="px-6 mb-8">
         <div className="bg-slate-800/30 rounded-3xl border border-white/5 overflow-hidden shadow-sm">
           {/* Header */}
@@ -405,7 +409,7 @@ const Mine: React.FC<MineProps> = ({
           >
             <div className="flex items-center gap-2">
               <BarChart3 className="text-indigo-500" size={18} />
-              <span className="text-white font-bold text-sm">鍚瓕缁熻</span>
+              <span className="text-white font-bold text-sm">听歌统计</span>
             </div>
             {isStatsExpanded ? <ChevronUp size={16} className="text-slate-500" /> : <ChevronDown size={16} className="text-slate-500" />}
           </div>
@@ -415,21 +419,21 @@ const Mine: React.FC<MineProps> = ({
             <div className="px-5 pb-5 animate-in slide-in-from-top-2 duration-300">
               <div className="flex justify-between items-end mb-4">
                 <div>
-                  <p className="text-xs text-slate-500 mb-1">鏈€杩?0澶?/p>
+                  <p className="text-xs text-slate-500 mb-1">最近30天</p>
                   <p className="text-xl font-bold text-white flex items-baseline gap-1">
                     {totalListenText}
-                    <span className="text-xs font-normal text-slate-400">绱</span>
+                    <span className="text-xs font-normal text-slate-400">累计</span>
                   </p>
                 </div>
                 <button
                   onClick={() => onNavigateChart?.()}
                   className="text-xs text-indigo-500 flex items-center gap-1 hover:text-indigo-400"
                 >
-                  璇︾粏鎶ュ憡 <ChevronRight size={12} />
+                  详细报告 <ChevronRight size={12} />
                 </button>
               </div>
 
-              {/* 6*5 鐑姏鍥?*/}
+              {/* 6*5 热力图 */}
               <div className="grid grid-cols-10 gap-2">
                 {heatmapData.map((d, i) => (
                   <div
@@ -437,7 +441,7 @@ const Mine: React.FC<MineProps> = ({
                     className={`aspect-square rounded-md ${getHeatmapColor(d.level)} transition-all hover:scale-110 relative group`}
                   >
                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block bg-black/80 text-white text-[9px] px-2 py-1 rounded whitespace-nowrap z-10">
-                      {d.date}: {d.minutes}鍒?
+                      {d.date}: {d.minutes}分
                     </div>
                   </div>
                 ))}
@@ -445,7 +449,7 @@ const Mine: React.FC<MineProps> = ({
 
               {/* Legend */}
               <div className="flex items-center justify-end gap-2 mt-3">
-                <span className="text-[9px] text-slate-600">灏?/span>
+                <span className="text-[9px] text-slate-600">少</span>
                 <div className="flex gap-1">
                   <div className="w-2 h-2 rounded-sm bg-slate-700/50"></div>
                   <div className="w-2 h-2 rounded-sm bg-indigo-400/40"></div>
@@ -453,18 +457,18 @@ const Mine: React.FC<MineProps> = ({
                   <div className="w-2 h-2 rounded-sm bg-indigo-500"></div>
                   <div className="w-2 h-2 rounded-sm bg-indigo-400"></div>
                 </div>
-                <span className="text-[9px] text-slate-600">澶?/span>
+                <span className="text-[9px] text-slate-600">多</span>
               </div>
             </div>
           )}
         </div>
       </div>
 
-      {/* 4. 鏀惰棌姝屽崟 */}
+      {/* 4. 收藏歌单 */}
       <div className="px-6 mb-8">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-white font-bold text-base flex items-center gap-2">
-            鏀惰棌姝屽崟
+            收藏歌单
             <span className="text-xs text-slate-500 font-normal">({favoriteOnlineList.length})</span>
           </h2>
           <button
@@ -478,8 +482,8 @@ const Mine: React.FC<MineProps> = ({
 
         {isFavoriteOnlineExpanded && (favoriteOnlineList.length === 0 ? (
           <div className="text-center py-8 border border-dashed border-slate-700 rounded-2xl bg-slate-800/20">
-            <p className="text-slate-500 text-xs">鏆傛棤鏀惰棌姝屽崟</p>
-            <p className="text-slate-600 text-[10px] mt-1">鍘绘瓕鍗曞箍鍦烘敹钘忎綘鍠滄鐨勫湪绾挎瓕鍗?/p>
+            <p className="text-slate-500 text-xs">暂无收藏歌单</p>
+            <p className="text-slate-600 text-[10px] mt-1">去歌单广场收藏你喜欢的在线歌单</p>
           </div>
         ) : (
           <div className="space-y-2">
@@ -503,7 +507,7 @@ const Mine: React.FC<MineProps> = ({
 
                   <div className="flex-1 min-w-0">
                     <div className="text-slate-200 text-sm font-bold truncate">{cfg.name}</div>
-                    <div className="text-xs text-slate-500 mt-1">{cfg.type === 'qq_id' ? 'QQ瀹樻柟姝屽崟' : '鍦ㄧ嚎绮鹃€夋瓕鍗?}</div>
+                    <div className="text-xs text-slate-500 mt-1">{cfg.type === 'qq_id' ? 'QQ官方歌单' : '在线精选歌单'}</div>
                   </div>
 
                   <button
@@ -521,22 +525,22 @@ const Mine: React.FC<MineProps> = ({
         ))}
       </div>
 
-      {/* 5. 鎴戠殑姝屽崟 */}
+      {/* 5. 我的歌单 */}
       <div className="px-6">
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-white font-bold text-base flex items-center gap-2">
-            鎴戠殑姝屽崟
+            我的歌单
             <span className="text-xs text-slate-500 font-normal">({playlists.length})</span>
           </h2>
           <div className="flex gap-2">
-            {/* 鉁?瀵煎叆鎸夐挳 */}
+            {/* ✅ 导入按钮 */}
             <button
               onClick={() => { setShowImport(true); setImportId(''); }}
               className="p-1.5 bg-slate-800 rounded-lg hover:bg-slate-700 text-slate-300 active:scale-90 transition-transform"
             >
               <Import size={18} />
             </button>
-            {/* 鏂板缓鎸夐挳 */}
+            {/* 新建按钮 */}
             <button
               onClick={() => setShowCreate(true)}
               className="p-1.5 bg-slate-800 rounded-lg hover:bg-slate-700 text-slate-300 active:scale-90 transition-transform"
@@ -547,7 +551,7 @@ const Mine: React.FC<MineProps> = ({
         </div>
 
         <div className="space-y-2">
-          {/* 鍏堟樉绀?鎴戝枩娆?姝屽崟 */}
+          {/* 先显示"我喜欢"歌单 */}
           {favorite && (
             <div
               key={favorite.id}
@@ -560,18 +564,18 @@ const Mine: React.FC<MineProps> = ({
 
               <div className="flex-1 min-w-0">
                 <div className="text-slate-200 text-sm font-bold truncate flex items-center gap-1 text-slate-900">
-                  <span className="text-slate-200">鎴戝枩娆?/span>
+                  <span className="text-slate-200">我喜欢</span>
                 </div>
-                <div className="text-xs text-slate-500 mt-1">{favorite.songCount || 0} 棣?路 鎴戠殑绾㈠績姝屾洸</div>
+                <div className="text-xs text-slate-500 mt-1">{favorite.songCount || 0} 首 · 我的红心歌曲</div>
               </div>
             </div>
           )}
 
-          {/* 鍐嶆樉绀哄叾浠栨瓕鍗?*/}
+          {/* 再显示其他歌单 */}
           {otherPlaylists.length === 0 && (
             <div className="text-center py-10 border border-dashed border-slate-700 rounded-2xl bg-slate-800/20">
-              <p className="text-slate-500 text-xs">鏆傛棤鑷缓姝屽崟</p>
-              <button onClick={() => setShowCreate(true)} className="mt-2 text-indigo-500 text-xs">绔嬪嵆鍒涘缓</button>
+              <p className="text-slate-500 text-xs">暂无自建歌单</p>
+              <button onClick={() => setShowCreate(true)} className="mt-2 text-indigo-500 text-xs">立即创建</button>
             </div>
           )}
 
@@ -590,7 +594,7 @@ const Mine: React.FC<MineProps> = ({
               >
                 <div className="w-14 h-14 rounded-xl mr-3 bg-slate-800 shadow-md overflow-hidden flex-shrink-0 relative">
                   <img src={pl.coverUrl} className="w-full h-full object-cover" alt={pl.title} />
-                  {/* 鉁?瀵煎叆瑙掓爣 */}
+                  {/* ✅ 导入角标 */}
                   {isQQ && <div className="absolute top-0 right-0 bg-green-500 text-white text-[8px] px-1 rounded-bl-md font-bold shadow-sm">QQ</div>}
                   {isKuwo && <div className="absolute top-0 right-0 bg-yellow-500 text-white text-[8px] px-1 rounded-bl-md font-bold shadow-sm">KW</div>}
                   {isWyy && <div className="absolute top-0 right-0 bg-red-500 text-white text-[8px] px-1 rounded-bl-md font-bold shadow-sm">WY</div>}
@@ -601,7 +605,7 @@ const Mine: React.FC<MineProps> = ({
                   <div className="flex items-center gap-2">
                     <div className="text-slate-200 text-sm font-bold truncate max-w-[80%]">{pl.title}</div>
                   </div>
-                  <div className="text-xs text-slate-500 mt-1">{pl.songCount || 0} 棣?路 {isImported ? '澶栭儴瀵煎叆' : pl.description || '鏃犵畝浠?}</div>
+                  <div className="text-xs text-slate-500 mt-1">{pl.songCount || 0} 首 · {isImported ? '外部导入' : pl.description || '无简介'}</div>
                 </div>
               </div>
             );
@@ -613,21 +617,21 @@ const Mine: React.FC<MineProps> = ({
       {(showCreate) && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-6 animate-in fade-in">
           <div className="bg-slate-900 w-full max-w-xs rounded-2xl p-6 border border-white/10 shadow-2xl">
-            <h3 className="text-white font-bold text-lg mb-4">鏂板缓姝屽崟</h3>
-            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="杈撳叆姝屽崟鍚嶇О" className="w-full bg-slate-800 text-white p-3 rounded-xl text-sm outline-none border border-transparent focus:border-indigo-500" autoFocus />
+            <h3 className="text-white font-bold text-lg mb-4">新建歌单</h3>
+            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="输入歌单名称" className="w-full bg-slate-800 text-white p-3 rounded-xl text-sm outline-none border border-transparent focus:border-indigo-500" autoFocus />
             <div className="flex gap-3 mt-6">
-              <button onClick={() => setShowCreate(false)} className="flex-1 py-2.5 rounded-xl bg-slate-800  text-slate-300 font-bold text-sm">鍙栨秷</button>
-              <button onClick={createPlaylist} className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white font-bold text-sm hover:bg-indigo-500">纭畾</button>
+              <button onClick={() => setShowCreate(false)} className="flex-1 py-2.5 rounded-xl bg-slate-800  text-slate-300 font-bold text-sm">取消</button>
+              <button onClick={createPlaylist} className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white font-bold text-sm hover:bg-indigo-500">确定</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 鉁?Dialog: Import Playlist */}
+      {/* ✅ Dialog: Import Playlist */}
       {showImport && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-6 animate-in fade-in">
           <div className="bg-slate-900 w-full max-w-sm rounded-2xl p-6 border border-white/10 shadow-2xl">
-            <h3 className="text-white font-bold text-lg mb-4">瀵煎叆澶栭儴姝屽崟</h3>
+            <h3 className="text-white font-bold text-lg mb-4">导入外部歌单</h3>
 
             {/* Source Select */}
             <div className="flex gap-2 mb-4">
@@ -635,26 +639,26 @@ const Mine: React.FC<MineProps> = ({
                 onClick={() => setImportSource('qq')}
                 className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all border ${importSource === 'qq' ? 'bg-green-500 text-white border-green-500' : 'bg-slate-800 text-slate-500 border-transparent'}`}
               >
-                QQ闊充箰
+                QQ
               </button>
-              {/* 鉁?鍚敤閰锋垜鎸夐挳 */}
+              {/* ✅ 启用酷我按钮 */}
               <button
                 onClick={() => setImportSource('kuwo')}
                 className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all border ${importSource === 'kuwo' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-slate-800 text-slate-500 border-transparent'}`}
               >
-                閰锋垜闊充箰
+                酷我
               </button>
               <button
                 onClick={() => setImportSource('wyy')}
                 className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all border ${importSource === 'wyy' ? 'bg-red-500 text-white border-red-500' : 'bg-slate-800 text-slate-500 border-transparent'}`}
               >
-                缃戞槗浜?
+                网易云
               </button>
               <button
                 onClick={() => setImportSource('kugou')}
                 className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all border ${importSource === 'kugou' ? 'bg-sky-500 text-white border-sky-500' : 'bg-slate-800 text-slate-500 border-transparent'}`}
               >
-                閰风嫍
+                酷狗
               </button>
             </div>
 
@@ -663,12 +667,12 @@ const Mine: React.FC<MineProps> = ({
               <input
                 value={importId}
                 onChange={e => setImportId(e.target.value)}
-                placeholder={importSource === 'qq' ? "请输入 QQ 歌单 ID (纯数字)" : (importSource === 'kuwo' ? "请输入 酷我 歌单 ID" : (importSource === 'wyy' ? "请输入 网易云 UID" : "请输入 酷狗 歌单 ID/链接"))}
+                placeholder={importSource === 'qq' ? "请输入QQ歌单 ID" : (importSource === 'kuwo' ? "请输入酷我歌单 ID" : (importSource === 'wyy' ? "请输入网易云歌单 ID" : "请输入酷狗码/链接"))}
                 className={`w-full bg-slate-800  text-white p-3 rounded-xl text-sm outline-none border border-transparent transition-colors ${importSource === 'qq' ? 'focus:border-green-500' : (importSource === 'kuwo' ? 'focus:border-yellow-500' : (importSource === 'wyy' ? 'focus:border-red-500' : 'focus:border-sky-500'))}`}
                 autoFocus
               />
               <p className="text-[10px] text-slate-400 mt-2 ml-1">
-                * {importSource === 'qq' ? '在QQ音乐分享歌单链接，复制链接中的数字 ID' : (importSource === 'kuwo' ? '在酷我音乐网页版/分享链接中查找 ID (如 2996314807)' : (importSource === 'wyy' ? '输入网易云用户 UID' : '支持输入酷狗歌单 ID 或概念版歌单链接'))}
+                * {importSource === 'qq' ? '在QQ音乐分享歌单链接，复制链接中的数字 ID' : (importSource === 'kuwo' ? '在酷我音乐网页版/分享链接中查找 ID' : (importSource === 'wyy' ? '输入网易云用户歌单ID' : '支持输入酷狗码或概念版歌单链接'))}
               </p>
             </div>
 
@@ -678,14 +682,14 @@ const Mine: React.FC<MineProps> = ({
                 onClick={() => { setShowImport(false); setImportId(''); }}
                 className="flex-1 py-2.5 rounded-xl bg-slate-800  text-slate-300 font-bold text-sm"
               >
-                鍙栨秷
+                取消
               </button>
               <button
                 onClick={handleImportPlaylist}
                 disabled={importing || !importId}
-className={`flex-1 py-2.5 rounded-xl text-white font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-2 ${importSource === 'qq' ? 'bg-green-500 hover:bg-green-600' : (importSource === 'kuwo' ? 'bg-yellow-500 hover:bg-yellow-600' : (importSource === 'wyy' ? 'bg-red-500 hover:bg-red-600' : 'bg-sky-500 hover:bg-sky-600'))}`}
+                className={`flex-1 py-2.5 rounded-xl text-white font-bold text-sm disabled:opacity-50 flex items-center justify-center gap-2 ${importSource === 'qq' ? 'bg-green-500 hover:bg-green-600' : (importSource === 'kuwo' ? 'bg-yellow-500 hover:bg-yellow-600' : (importSource === 'wyy' ? 'bg-red-500 hover:bg-red-600' : 'bg-sky-500 hover:bg-sky-600'))}`}
               >
-                {importing ? <Loader2 size={16} className="animate-spin" /> : '瀵煎叆'}
+                {importing ? <Loader2 size={16} className="animate-spin" /> : '导入'}
               </button>
             </div>
           </div>

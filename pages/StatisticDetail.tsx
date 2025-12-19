@@ -16,7 +16,10 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
     const [records, setRecords] = useState<any[]>([]);
 
     useEffect(() => {
-        getListenRecords().then(setRecords);
+        const load = () => getListenRecords().then(setRecords);
+        load();
+        window.addEventListener('listen-history-updated', load);
+        return () => window.removeEventListener('listen-history-updated', load);
     }, []);
 
     // --- 基础统计 ---
@@ -43,7 +46,7 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
         };
     }, [records]);
 
-    // --- 图表数据：24小时分布 ---
+    // --- 图表数据�?4小时分布 ---
     const dayData = useMemo(() => {
         const arr = Array.from({ length: 24 }, (_, h) => ({ label: `${h}点`, value: 0 }));
         records.forEach(r => {
@@ -53,7 +56,7 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
         return arr.map(item => ({ ...item, value: Math.round(item.value) }));
     }, [records]);
 
-    // --- 图表数据：周趋势 (最近7天) ---
+    // --- 图表数据：周趋势 ---
     const weekTrend = useMemo(() => {
         const map: Record<string, number> = {};
         const now = new Date();
@@ -83,9 +86,9 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
     }, [records]);
 
     return (
-        <div className="h-full bg-slate-950 overflow-y-auto no-scrollbar pb-20 animate-in slide-in-from-right duration-300">
+        <div className="h-full bg-neutral-950 overflow-y-auto no-scrollbar pb-20 animate-in slide-in-from-right duration-300">
             {/* Header */}
-            <div className="sticky top-0 z-10 bg-slate-950/80 backdrop-blur-md px-4 py-4 flex items-center gap-3 border-b border-white/5">
+            <div className="sticky top-0 z-10 bg-neutral-950/80 backdrop-blur-md px-4 py-4 flex items-center gap-3 border-b border-white/5">
                 <button onClick={onBack} className="p-2 -ml-2 rounded-full hover:bg-white/10 text-white">
                     <ArrowLeft size={24} />
                 </button>
@@ -96,8 +99,8 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
 
                 {/* 概览卡片 */}
                 <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-indigo-600/20 border border-indigo-500/20 p-4 rounded-2xl flex flex-col justify-between h-32">
-                        <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-white mb-2">
+                    <div className="bg-neutral-600/20 border border-indigo-500/20 p-4 rounded-2xl flex flex-col justify-between h-32">
+                        <div className="w-8 h-8 rounded-full bg-neutral-500 flex items-center justify-center text-white mb-2">
                             <Clock size={16} />
                         </div>
                         <div>
@@ -105,8 +108,8 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
                             <p className="text-xl font-bold text-white mt-0.5">{stats.totalTime}</p>
                         </div>
                     </div>
-                    <div className="bg-emerald-600/20 border border-emerald-500/20 p-4 rounded-2xl flex flex-col justify-between h-32">
-                        <div className="w-8 h-8 rounded-full bg-emerald-500 flex items-center justify-center text-white mb-2">
+                    <div className="bg-neutral-600/20 border border-emerald-500/20 p-4 rounded-2xl flex flex-col justify-between h-32">
+                        <div className="w-8 h-8 rounded-full bg-neutral-500 flex items-center justify-center text-white mb-2">
                             <Music size={16} />
                         </div>
                         <div>
@@ -116,14 +119,14 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
                     </div>
                 </div>
 
-                {/* 最爱统计 */}
-                <div className=" bg-slate-900  rounded-3xl p-5 border border-white/5">
+                {/* 最爱统�?*/}
+                <div className=" bg-neutral-900  rounded-3xl p-5 border border-white/5">
                     <h2 className="text-white font-bold text-sm mb-4 flex items-center gap-2">
                         <PieChart size={16} className="text-orange-400" /> 听歌偏好
                     </h2>
                     <div className="space-y-4">
                         <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-xl bg-[#0f172a] flex items-center justify-center text-slate-400">
+                            <div className="w-12 h-12 rounded-xl bg-[#0b0b0b] flex items-center justify-center text-slate-400">
                                 <Mic2 size={24} />
                             </div>
                             <div>
@@ -133,21 +136,21 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
                         </div>
                         <div className="w-full h-[1px] bg-white/5" />
                         <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-xl bg-[#0f172a] flex items-center justify-center text-slate-400">
+                            <div className="w-12 h-12 rounded-xl bg-[#0b0b0b] flex items-center justify-center text-slate-400">
                                 <Music size={24} />
                             </div>
                             <div>
-                                <p className="text-xs text-slate-500">单曲循环最多</p>
+                                <p className="text-xs text-slate-500">单曲循环最多的歌曲</p>
                                 <p className="text-white font-medium">{stats.topSong}</p>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                {/* 24小时分布图 */}
-                <div className=" bg-slate-900  rounded-3xl p-5 border border-white/5">
+                {/* 24小时分布*/}
+                <div className=" bg-neutral-900  rounded-3xl p-5 border border-white/5">
                     <h2 className="text-white font-bold text-sm mb-4 flex items-center gap-2">
-                        <Clock size={16} className="text-blue-400" /> 24小时活跃度
+                        <Clock size={16} className="text-blue-400" /> 24小时
                     </h2>
                     <div className="h-48 w-full">
                         <ResponsiveContainer width="100%" height="100%">
@@ -161,7 +164,7 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
                                 <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} interval={3} />
                                 <Tooltip
                                     cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                                    contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', fontSize: '12px', color: '#fff' }}
+                                    contentStyle={{ background: '#0b0b0b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', fontSize: '12px', color: '#fff' }}
                                 />
                                 <Bar dataKey="value" fill="url(#colorBar)" radius={[4, 4, 0, 0]} />
                             </BarChart>
@@ -170,9 +173,9 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
                 </div>
 
                 {/* 周趋势图 */}
-                <div className=" bg-slate-900  rounded-3xl p-5 border border-white/5">
+                <div className=" bg-neutral-900  rounded-3xl p-5 border border-white/5">
                     <h2 className="text-white font-bold text-sm mb-4 flex items-center gap-2">
-                        <CalendarDays size={16} className="text-purple-400" /> 近7天听歌时长 (分钟)
+                        <CalendarDays size={16} className="text-purple-400" /> 周趋势
                     </h2>
                     <div className="h-48 w-full">
                         <ResponsiveContainer width="100%" height="100%">
@@ -185,7 +188,7 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
                                 </defs>
                                 <XAxis dataKey="day" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} />
                                 <Tooltip
-                                    contentStyle={{ background: '#0f172a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', fontSize: '12px', color: '#fff' }}
+                                    contentStyle={{ background: '#0b0b0b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', fontSize: '12px', color: '#fff' }}
                                 />
                                 <Area type="monotone" dataKey="minutes" stroke="#8b5cf6" strokeWidth={3} fill="url(#colorArea)" />
                             </AreaChart>
@@ -199,3 +202,5 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
 };
 
 export default StatisticDetail;
+
+

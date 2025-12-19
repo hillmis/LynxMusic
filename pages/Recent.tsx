@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Clock, PlayCircle, Trash2 } from 'lucide-react';
+import { ArrowLeft, Clock, PlayCircle, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
 import { Song } from '../types';
 import { getListenRecords, dbClearPlayHistory, ListenRecord } from '../utils/db';
 import { formatDuration } from '../utils/time';
@@ -16,6 +16,7 @@ const Recent: React.FC<RecentProps> = ({
     onAddToQueue
 }) => {
     const [records, setRecords] = useState<ListenRecord[]>([]);
+    const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
     useEffect(() => {
         loadData();
@@ -43,8 +44,8 @@ const Recent: React.FC<RecentProps> = ({
         () => formatDuration(totalSeconds, { keepSeconds: true }),
         [totalSeconds]
     );
-    const artistCount = useMemo(() => {
-        const set = new Set(records.map(r => r.artist).filter(Boolean));
+    const songCount = useMemo(() => {
+        const set = new Set(records.map(r => r.songId).filter(Boolean));
         return set.size;
     }, [records]);
 
@@ -78,6 +79,16 @@ const Recent: React.FC<RecentProps> = ({
 
         return Object.entries(groups).filter(([_, list]) => list.length > 0);
     }, [records]);
+
+    useEffect(() => {
+        setExpandedGroups(prev => {
+            const next = { ...prev };
+            grouped.forEach(([label]) => {
+                if (next[label] === undefined) next[label] = true;
+            });
+            return next;
+        });
+    }, [grouped]);
 
     const formatTime = (ts: number) => {
         const d = new Date(ts);
@@ -116,8 +127,8 @@ const Recent: React.FC<RecentProps> = ({
                             <p className="text-lg font-bold text-white mt-0.5">{totalDurationText}</p>
                         </div>
                         <div className="text-xs text-slate-500 text-right">
-                            <p className="text-white text-sm font-semibold">{artistCount}</p>
-                            <p>歌手数</p>
+                             <p className="text-xs text-slate-500">播放歌曲数</p>
+                            <p className="text-lg font-bold text-white mt-0.5">{songCount}</p>
                         </div>
                     </div>
                 </div>
@@ -133,46 +144,59 @@ const Recent: React.FC<RecentProps> = ({
                     <div className="space-y-6">
                         {grouped.map(([label, list]) => (
                             <div key={label}>
-                                <h3 className="text-xs font-bold text-indigo-400 uppercase tracking-wider mb-3 px-2">
-                                    {label} <span className="text-slate-600 font-normal ml-1">({list.length})</span>
-                                </h3>
-                                <div className="space-y-1">
-                                    {list.map((r, idx) => {
-                                        const song: Song = {
-                                            id: r.songId,
-                                            title: r.title,
-                                            artist: r.artist,
-                                            coverUrl: r.coverUrl,
-                                            url: '' // 需要在播放时重新获取
-                                        };
+                                <button
+                                    type="button"
+                                    onClick={() => setExpandedGroups(prev => ({ ...prev, [label]: !prev[label] }))}
+                                    className="w-full flex items-center justify-between text-xs font-bold text-indigo-400 uppercase tracking-wider mb-3 px-2"
+                                >
+                                    <span>
+                                        {label} <span className="text-slate-600 font-normal ml-1">({list.length})</span>
+                                    </span>
+                                    {expandedGroups[label] ? (
+                                        <ChevronUp size={14} className="text-slate-500" />
+                                    ) : (
+                                        <ChevronDown size={14} className="text-slate-500" />
+                                    )}
+                                </button>
+                                {expandedGroups[label] && (
+                                    <div className="space-y-1">
+                                        {list.map((r, idx) => {
+                                            const song: Song = {
+                                                id: r.songId,
+                                                title: r.title,
+                                                artist: r.artist,
+                                                coverUrl: r.coverUrl,
+                                                url: '' // 需要在播放时重新获取
+                                            };
 
-                                        return (
-                                            <div
-                                                key={`${r.id}_${idx}`}
-                                                onClick={() => onPlaySong(song)}
-                                                className="group flex items-center p-2 rounded-xl hover:bg-white/5 active:bg-white/10 transition-colors cursor-pointer"
-                                            >
-                                                <div className="relative w-12 h-12 rounded-lg overflow-hidden mr-3 bg-[#0f172a] shrink-0">
-                                                    <img src={r.coverUrl || 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=100&q=80'} className="w-full h-full object-cover" loading="lazy" />
-                                                    <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                        <PlayCircle size={20} className="text-white" />
+                                            return (
+                                                <div
+                                                    key={`${r.id}_${idx}`}
+                                                    onClick={() => onPlaySong(song)}
+                                                    className="group flex items-center p-2 rounded-xl hover:bg-white/5 active:bg-white/10 transition-colors cursor-pointer"
+                                                >
+                                                    <div className="relative w-12 h-12 rounded-lg overflow-hidden mr-3 bg-[#0f172a] shrink-0">
+                                                        <img src={r.coverUrl || 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=100&q=80'} className="w-full h-full object-cover" loading="lazy" />
+                                                        <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                            <PlayCircle size={20} className="text-white" />
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="flex-1 min-w-0">
+                                                        <h4 className="text-sm text-white font-medium truncate">{r.title}</h4>
+                                                        <p className="text-xs text-slate-500 truncate mt-0.5">
+                                                            {r.artist}
+                                                            <span className="mx-1">·</span>
+                                                            {label === '更早' ? formatDate(r.ts) : formatTime(r.ts)}
+                                                            <span className="mx-1">·</span>
+                                                            <span className="text-indigo-400/80">听了 {formatDuration(r.playedSeconds, { keepSeconds: true })}</span>
+                                                        </p>
                                                     </div>
                                                 </div>
-
-                                                <div className="flex-1 min-w-0">
-                                                    <h4 className="text-sm text-white font-medium truncate">{r.title}</h4>
-                                                    <p className="text-xs text-slate-500 truncate mt-0.5">
-                                                        {r.artist}
-                                                        <span className="mx-1">·</span>
-                                                        {label === '更早' ? formatDate(r.ts) : formatTime(r.ts)}
-                                                        <span className="mx-1">·</span>
-                                                        <span className="text-indigo-400/80">听了 {formatDuration(r.playedSeconds, { keepSeconds: true })}</span>
-                                                    </p>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
                             </div>
                         ))}
                     </div>

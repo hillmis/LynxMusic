@@ -1,203 +1,249 @@
-﻿
-import { Song, Playlist } from '../types';
+﻿import { Song, Playlist } from '../types';
 
-const DEFAULT_API_HOST = '';
-const DEFAULT_API_KEY = '';
+// --- 配置与常量 ---
+const DEFAULT_API_HOST = 'https://sdkapi.hhlqilongzhu.cn/api';
+const DEFAULT_API_KEY = 'Dragon652C2277C78812D1B1ED2C5D087D9053';
+const MY_PROXY_URL = 'https://hillmusic.liumao1118.workers.dev';
+const PROXY_POOL = [
+    (url: string) => `https://bird.ioliu.cn/v1/?url=${encodeURIComponent(url)}`,               // 国内可直连
+    (url: string) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,    // 稳定免费
+    (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,          // 轻量备用
+    (url: string) => `https://v1.cors.workers.dev/?u=${encodeURIComponent(url)}`,              // Cloudflare 辅助
+    (url: string) => `${MY_PROXY_URL}?url=${encodeURIComponent(url)}`                          // 你的代理放最后
+];
 
-// 每一批请求的歌曲数量
-const BATCH_SIZE = 30;
-const REQUEST_TIMEOUT_MS = 8000;
-const RETRY_LIMIT = 2;
+// 性能调优参数
+const BATCH_SIZE = 30;           // 每批次请求歌曲数
+const REQUEST_TIMEOUT_MS = 10000; // 默认10秒超时
+const RETRY_LIMIT = 2;           // 最大重试次数
 
-// 辅助函数：休眠
+// --- 基础辅助函数 ---
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-const fetchTextWithTimeout = async (url: string, timeoutMs: number) => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-        const response = await fetch(url, { signal: controller.signal });
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-        return await response.text();
-    } finally {
-        clearTimeout(timeoutId);
-    }
+/**
+ * 强制处理 HTTPS 协议，修复混合内容拦截
+ */
+const ensureHttps = (url: string): string => {
+    if (!url) return '';
+    if (url.startsWith('//')) return `https:${url}`;
+    return url.replace(/^http:/, 'https:');
 };
 
-const fetchJsonWithTimeout = async (url: string, timeoutMs: number) => {
-    const text = await fetchTextWithTimeout(url, timeoutMs);
-    const cleanText = text.trim().replace(/^[\uFEFF\s]+/, '');
-    return JSON.parse(cleanText);
+/**
+ * 智能分流请求引擎：
+ * 1. 针对国内直连 API (DragonLongzhu, Xfabe) 优先不走代理，提速 200%。
+ * 2. 针对需要伪造 Referer 的平台 (QQ, 酷我) 自动走你的专属代理。
+ * 3. 支持 skipProxy 参数，手动强制直连。
+ */
+const fastFetch = async (
+    url: string,
+    options: { timeout?: number; forceProxy?: boolean; skipProxy?: boolean; fallbackToProxy?: boolean } = {}
+): Promise<any> => {
+    const { timeout = REQUEST_TIMEOUT_MS, forceProxy = false, skipProxy = false, fallbackToProxy = true } = options;
+
+    // 逻辑：只有包含 QQ 和 酷我 的才走代理。酷狗 (kugou.com) 按要求不走代理。
+    const isMusicApi = url.includes('qq.com') || url.includes('kuwo.cn');
+    const needsProxy = !skipProxy && (forceProxy || isMusicApi);
+
+    const fetchJson = async (target: string) => {
+        let lastError: any;
+        for (let i = 0; i <= RETRY_LIMIT; i++) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), timeout);
+            try {
+                const response = await fetch(target, {
+                    signal: controller.signal,
+                    headers: { 'Accept': 'application/json' }
+                });
+                if (!response.ok) {
+                    const error: any = new Error(`HTTP ${response.status}`);
+                    error.status = response.status;
+                    throw error;
+                }
+                const text = await response.text();
+                clearTimeout(timeoutId);
+                const cleanText = text.trim().replace(/^[\uFEFF\s]+/, '');
+                return JSON.parse(cleanText);
+            } catch (err) {
+                clearTimeout(timeoutId);
+                lastError = err;
+                if (i < RETRY_LIMIT) {
+                    await sleep(300 * (i + 1));
+                    continue;
+                }
+            }
+        }
+        throw lastError;
+    };
+
+    const fetchThroughProxies = async (rawUrl: string) => {
+        const proxyList = PROXY_POOL;
+        const targetList = [rawUrl];
+        if (rawUrl.startsWith('https://') && rawUrl.includes('hhlqilongzhu.cn')) {
+            targetList.push(rawUrl.replace('https://', 'http://'));
+        }
+        let lastError: any;
+        for (const target of targetList) {
+            for (const toProxy of proxyList) {
+                try {
+                    const proxiedUrl = toProxy(target);
+                    return await fetchJson(proxiedUrl);
+                } catch (err) {
+                    lastError = err;
+                    continue;
+                }
+            }
+        }
+        throw lastError;
+    };
+
+    try {
+        if (needsProxy) {
+            return await fetchThroughProxies(url);
+        }
+        return await fetchJson(url);
+    } catch (err: any) {
+        // 如果是证书错误且是直连，尝试切换到 http (针对 hhlqilongzhu 这种证书过期的站)
+        if (!needsProxy && url.startsWith('https://www.hhlqilongzhu.cn')) {
+            const httpUrl = url.replace('https://', 'http://');
+            return await fastFetch(httpUrl, { ...options, skipProxy: true });
+        }
+
+        // 代理链路 526（源站证书问题）时，尝试降级为 http 重新走代理
+        if ((err as any)?.status === 526 && url.includes('hhlqilongzhu.cn')) {
+            const httpUrl = url.replace('https://', 'http://');
+            return await fastFetch(httpUrl, { ...options, forceProxy: true, skipProxy: false, fallbackToProxy: false });
+        }
+
+        // 直连失败（CORS/证书/301）时兜底走代理，避免被浏览器拦截
+        if (!needsProxy && fallbackToProxy) {
+            return await fetchThroughProxies(url);
+        }
+
+        throw err;
+    }
 };
 
 export const getApiConfig = () => {
     return {
-        host: localStorage.getItem('setting_api_host') || DEFAULT_API_HOST,
+        host: (localStorage.getItem('setting_api_host') || DEFAULT_API_HOST).replace(/\/$/, ''),
         key: localStorage.getItem('setting_api_key') || DEFAULT_API_KEY,
     };
 };
 
-// 测试 API 连接状态
+// --- API 核心功能实现 ---
+
+/**
+ * 测试 API 连接
+ */
 export const testApiConnection = async (host: string, key: string): Promise<boolean> => {
     if (!host || !key) return false;
     const cleanHost = host.replace(/\/$/, '');
-    const testUrl = `${cleanHost}/QQmusic/?key=${key}&n=&num=1&type=json&msg=test`;
+    const testUrl = `${cleanHost}/QQmusic/?key=${key}&n=1&num=1&type=json&msg=test`;
 
     try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-        const response = await fetch(testUrl, { signal: controller.signal });
-        clearTimeout(timeoutId);
-
-        if (!response.ok) return false;
-
-        const data = await response.json();
-        return data.code === 200;
-    } catch (e) {
-        console.warn('API Connection Test Failed:', e);
+        const data = await fastFetch(testUrl, { timeout: 5000 });
+        return data.code === 200 || data.status === 200;
+    } catch {
         return false;
     }
 };
 
+/**
+ * 音乐搜索
+ */
 export const searchMusic = async (keyword: string): Promise<Song[]> => {
     const { host, key } = getApiConfig();
+    if (!host || !key) return [];
 
-    if (!host || !key) {
-        return [];
-    }
-
-    const cleanHost = host.replace(/\/$/, '');
-    const listUrl = `${cleanHost}/QQmusic/?key=${key}&n=&num=60&type=json&msg=${encodeURIComponent(keyword)}`;
+    const url = `${host}/QQmusic/?key=${key}&num=60&type=json&msg=${encodeURIComponent(keyword)}`;
     try {
-        const response = await fetch(listUrl);
-        const data = await response.json();
-        if (data.code === 200 && Array.isArray(data.data)) {
-            return data.data.map((item: any, index: number) => {
-                const title = item.song_name || item.song_title || '未知歌曲';
-                const artist = item.song_singer || '未知歌手';
-                return {
-                    id: `api_${item.song_mid || item.songid || index}_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-                    title,
-                    artist,
-                    album: item.album_name || '在线音乐',
-                    coverUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&q=80',
-                    duration: 0,
-                    url: '',
-                    quality: item.quality || 'SQ无损',
-                    apiKeyword: `${title} ${artist}`,
-                    originalIndex: index + 1,
-                    isDetailsLoaded: false
-                };
-            });
-        }
-        return [];
-    } catch (error) { return []; }
+        const data = await fastFetch(url);
+        const list = Array.isArray(data.data) ? data.data : [];
+        
+        return list.map((item: any, index: number) => {
+            const title = item.song_name || item.song_title || '未知歌曲';
+            const artist = item.song_singer || '未知歌手';
+            return {
+                id: `api_${item.song_mid || item.songid || index}_${Date.now()}`,
+                title,
+                artist,
+                album: item.album_name || '在线音乐',
+                coverUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&q=80',
+                duration: 0,
+                url: '',
+                quality: item.quality || 'SQ',
+                apiKeyword: `${title} ${artist}`,
+                originalIndex: index + 1,
+                isDetailsLoaded: false
+            };
+        });
+    } catch { return []; }
 };
 
+/**
+ * 获取歌曲详情（播放链接和歌词）
+ */
 export const fetchSongDetail = async (song: Song): Promise<Song> => {
     if (song.isDetailsLoaded && song.url) return song;
 
     const { host, key } = getApiConfig();
     if (!host || !key) return song;
 
-    const cleanHost = host.replace(/\/$/, '');
-
-    // 构造搜索关键词：优先“歌名+歌手”
-    const searchMsg = `${song.title || ''} ${song.artist || ''}`.trim() || song.apiKeyword || song.title || '';
-    const nValue =1;
-
-    const url = `${cleanHost}/QQmusic/?key=${key}&n=${nValue}&num=60&type=json&msg=${encodeURIComponent(searchMsg)}`;
+    const searchMsg = (song.apiKeyword || `${song.title} ${song.artist}`).trim();
+    const url = `${host}/QQmusic/?key=${key}&n=1&type=json&msg=${encodeURIComponent(searchMsg)}`;
 
     try {
-        const response = await fetch(url);
-        const result = await response.json();
-
-        let detailData = null;
-        if (result.code === 200) {
-            if (Array.isArray(result.data)) {
-                detailData = result.data[0];
-            } else {
-                detailData = result.data;
-            }
-        }
+        const result = await fastFetch(url, { timeout: 8000 });
+        const detailData = Array.isArray(result.data) ? result.data[0] : result.data;
 
         if (detailData) {
             return {
                 ...song,
-                coverUrl: detailData.cover || detailData.pic || song.coverUrl,
+                coverUrl: ensureHttps(detailData.cover || detailData.pic || song.coverUrl),
                 url: detailData.music_url || detailData.url || '',
-                lyrics: detailData.lyric ? detailData.lyrics.replace(/\\n/g, '\n') : undefined,
+                lyrics: detailData.lyric ? detailData.lyric.replace(/\\n/g, '\n') : undefined,
                 quality: detailData.quality || song.quality,
                 isDetailsLoaded: true
             };
         }
-        // 尝试备用搜索：强制使用歌名+歌手
-        if (searchMsg !== song.apiKeyword && (song.title || song.artist)) {
-            return await fetchSongDetail({ ...song, apiKeyword: `${song.title || ''} ${song.artist || ''}`, originalIndex: 1 });
-        }
         return song;
-    } catch (error) {
-        console.error("Fetch Detail Error:", error);
-        return song;
-    }
+    } catch { return song; }
 };
 
+/**
+ * 获取 MV
+ */
 export const fetchMusicVideo = async (songTitle: string): Promise<string | null> => {
-    const apiEndpoints = ['https://api.suol.cc/v1/mv.php'];
-    for (const endpoint of apiEndpoints) {
-        try {
-            const url = `${endpoint}?msg=${encodeURIComponent(songTitle)}&n=1`;
-            const response = await fetch(url);
-            const data = await response.json();
-            if (data && data.code === 200 && data.url && data.url.length > 0) return data.url[0];
-        } catch (e) { continue; }
-    }
-    return null;
+    try {
+        const data = await fastFetch(`https://api.suol.cc/v1/mv.php?msg=${encodeURIComponent(songTitle)}&n=1`);
+        return (data && data.code === 200 && data.url?.[0]) ? data.url[0] : null;
+    } catch { return null; }
 };
 
 export const getDynamicPlaylist = async (keyword: string): Promise<Song[]> => {
     return await searchMusic(keyword);
 };
 
+/**
+ * 获取排行榜
+ */
 export const getTopCharts = async (chartId: string): Promise<Song[]> => {
     const cacheKey = `chart-${chartId}`;
-    const cachedData = sessionStorage.getItem(cacheKey);
-    if (cachedData) {
-        try {
-            const parsedData = JSON.parse(cachedData);
-            if (Array.isArray(parsedData) && parsedData.length > 0) {
-                return parsedData;
-            }
-        } catch (e) {
-            sessionStorage.removeItem(cacheKey);
-        }
-    }
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached) return JSON.parse(cached);
 
-    const url = `https://api.dragonlongzhu.cn/api/dg_QQphb.php?id=${chartId}&type=`;
-
+    const url = `https://api.dragonlongzhu.cn/api/dg_QQphb.php?id=${chartId}`;
     try {
-        const response = await fetch(url);
-        const data = await response.json();
-
-        let list: any[] = [];
-        if (data.code === 200 && Array.isArray(data.data)) {
-            list = data.data;
-        } else if (Array.isArray(data)) {
-            list = data;
-        } else if (data.data && Array.isArray(data.data)) {
-            list = data.data;
-        }
-
-        if (list.length === 0) return [];
-
+        const data = await fastFetch(url);
+        const list = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []);
+        
         const songs: Song[] = list.map((item: any, index: number) => ({
             id: `chart_${chartId}_${index}_${item.song_mid || ''}`,
             title: item.title || item.song_name || '未知歌曲',
             artist: item.singer || item.song_singer || '未知歌手',
-            coverUrl: item.cover || item.pic || `https://picsum.photos/300/300?random=${index}`,
+            coverUrl: ensureHttps(item.cover || item.pic || ''),
             album: '排行榜',
             duration: 0,
             url: '',
@@ -209,394 +255,184 @@ export const getTopCharts = async (chartId: string): Promise<Song[]> => {
 
         sessionStorage.setItem(cacheKey, JSON.stringify(songs));
         return songs;
-
-    } catch (error) {
-        console.error(`榜单 API 调用失败 (${chartId})`, error);
-        return [];
-    }
+    } catch { return []; }
 };
 
-// --- QQ 歌单导入 核心逻辑 ---
+// --- 各平台导入逻辑 ---
 
-const fetchQQBatch = async (disstid: number, begin: number, num: number): Promise<any> => {
-    const data = {
-        req: {
-            module: "music.srfDissInfo.aiDissInfo",
-            method: "uniform_get_Dissinfo",
-            param: {
-                song_begin: begin,
-                song_num: num,
-                disstid: disstid
-            }
-        }
-    };
-
-    const targetUrl = `https://u.y.qq.com/cgi-bin/musicu.fcg?data=${encodeURIComponent(JSON.stringify(data))}`;
-
-    const proxies = [
-        (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-        (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-        (url: string) => `https://thingproxy.freeboard.io/fetch/${url}`
-    ];
-
-    const urls = proxies.map((createProxyUrl) => createProxyUrl(targetUrl)).concat([targetUrl]);
-
-    for (const url of urls) {
-        for (let attempt = 0; attempt <= RETRY_LIMIT; attempt++) {
-            try {
-                const result = await fetchJsonWithTimeout(url, REQUEST_TIMEOUT_MS);
-                if (result?.req?.data) {
-                    return result.req.data;
-                }
-            } catch (e) {
-                if (attempt < RETRY_LIMIT) {
-                    await sleep(300 * (attempt + 1));
-                }
-            }
-        }
-    }
-    return null;
-};
-
+/**
+ * QQ 歌单导入（并行并发）
+ */
 export const fetchQQPlaylist = async (disstidStr: string): Promise<Playlist | null> => {
     const disstid = Number(disstidStr);
     if (!disstid) return null;
-    const allSongs: Song[] = [];
-    let dirInfo: any = null;
-    let totalNum = 0;
+
+    const buildUrl = (begin: number) => {
+        const data = { req: { module: "music.srfDissInfo.aiDissInfo", method: "uniform_get_Dissinfo", param: { song_begin: begin, song_num: BATCH_SIZE, disstid } } };
+        return `https://u.y.qq.com/cgi-bin/musicu.fcg?data=${encodeURIComponent(JSON.stringify(data))}`;
+    };
+
+    const parseSongs = (list: any[]) => (list || []).map((s: any) => ({
+        id: `qq_${s.mid}`,
+        title: s.name || s.title || '未知歌曲',
+        artist: s.singer?.map((singer: any) => singer.name).join(', ') || '未知歌手',
+        album: s.album?.name || '',
+        coverUrl: s.album?.mid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${s.album.mid}.jpg` : '',
+        duration: s.interval || 0,
+        source: 'qq' as const,
+        url: '',
+        isDetailsLoaded: false,
+        apiKeyword: `${s.name} ${s.singer?.[0]?.name || ''}`
+    }));
 
     try {
-        const firstBatch = await fetchQQBatch(disstid, 0, BATCH_SIZE);
+        const firstBatch = await fastFetch(buildUrl(0));
+        const resData = firstBatch?.req?.data;
+        if (!resData || !resData.dirinfo) return null;
 
-        if (!firstBatch || !firstBatch.dirinfo || !firstBatch.songlist) {
-            throw new Error("Invalid playlist data");
-        }
-
-        dirInfo = firstBatch.dirinfo;
-        totalNum = firstBatch.total_song_num || dirInfo.songnum || 0;
-
-        const parseSongs = (list: any[]) => list.map((s: any) => {
-            const albumMid = s.album?.mid || '';
-            const songName = s.name || s.title || '未知歌曲';
-            const singerName = s.singer?.map((singer: any) => singer.name).join(', ') || '未知歌手';
-
-            return {
-                id: `qq_${s.mid}`,
-                title: songName,
-                artist: singerName,
-                album: s.album?.name || '',
-                coverUrl: albumMid ? `https://y.gtimg.cn/music/photo_new/T002R300x300M000${albumMid}.jpg` : 'https://y.gtimg.cn/mediastyle/global/img/cover_like.png',
-                duration: s.interval,
-                source: 'qq' as const,
-                url: '',
-                isDetailsLoaded: false,
-                apiKeyword: `${songName} ${singerName}`
-            };
-        });
-
-        allSongs.push(...parseSongs(firstBatch.songlist));
+        const totalNum = resData.total_song_num || resData.dirinfo.songnum || 0;
+        let allSongs: Song[] = parseSongs(resData.songlist);
 
         if (totalNum > BATCH_SIZE) {
-            let currentBegin = BATCH_SIZE;
-            const actualTotal = totalNum;
-
-            while (currentBegin < actualTotal) {
-                await sleep(300);
-                const batchData = await fetchQQBatch(disstid, currentBegin, BATCH_SIZE);
-                if (!batchData || !batchData.songlist) {
-                    throw new Error(`Playlist batch missing at ${currentBegin}`);
-                }
-                allSongs.push(...parseSongs(batchData.songlist));
-                currentBegin += BATCH_SIZE;
+            const nextBatches = [];
+            for (let begin = BATCH_SIZE; begin < totalNum; begin += BATCH_SIZE) {
+                nextBatches.push(fastFetch(buildUrl(begin)));
             }
+            const results = await Promise.allSettled(nextBatches);
+            results.forEach(res => {
+                if (res.status === 'fulfilled' && res.value?.req?.data?.songlist) {
+                    allSongs.push(...parseSongs(res.value.req.data.songlist));
+                }
+            });
         }
 
-        const playlist: Playlist = {
-            id: `qq_pl_${dirInfo.id}`,
-            title: dirInfo.title,
-            creator: dirInfo.nick || 'QQ音乐用户',
-            coverUrl: dirInfo.picurl || allSongs[0]?.coverUrl || '',
-            coverImgStack: allSongs.slice(0, 3).map(s => s.coverUrl).filter(Boolean),
+        return {
+            id: `qq_pl_${disstid}`,
+            title: resData.dirinfo.title,
+            creator: resData.dirinfo.nick || 'QQ音乐用户',
+            coverUrl: ensureHttps(resData.dirinfo.picurl || allSongs[0]?.coverUrl || ''),
+            coverImgStack: allSongs.slice(0, 3).map(s => s.coverUrl),
             songCount: allSongs.length,
-            description: dirInfo.desc ? dirInfo.desc.replace(/<br>/g, '\n') : '',
+            description: resData.dirinfo.desc || '',
             songs: allSongs,
             apiKeyword: '',
             isLocal: false,
             source: 'qq'
         };
-
-        return playlist;
-
-    } catch (error) {
-        console.error("QQ Playlist Fetch Error:", error);
-        return null;
-    }
+    } catch { return null; }
 };
 
-// --- ✅ 修复：酷我歌单导入 ---
-
+/**
+ * 酷我歌单导入
+ */
 export const fetchKuwoPlaylist = async (id: string): Promise<Playlist | null> => {
-    if (!id) return null;
-    // 酷我移动端 API
-    // rn=1000 表示一次获取1000首，通常不需要分页
-    const targetUrl = `https://mobilist.kuwo.cn/list.s?type=songlist&id=${id}&pn=0&rn=300`;
-
-    // ✅ 修复1: 调整代理池顺序，allorigins 可能超时，corsproxy.io 通常更稳定
-    const proxies = [
-        (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-        (url: string) => `https://thingproxy.freeboard.io/fetch/${url}`,
-        (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-    ];
-
-    let json: any = null;
-    const urls = proxies.map((createProxyUrl) => createProxyUrl(targetUrl)).concat([targetUrl]);
-
-    for (const url of urls) {
-        for (let attempt = 0; attempt <= RETRY_LIMIT; attempt++) {
-            try {
-                const text = await fetchTextWithTimeout(url, REQUEST_TIMEOUT_MS);
-                // Kuwo sometimes returns HTML or BOM-wrapped JSON; strip BOM before parse.
-                try {
-                    const cleanText = text.trim().replace(/^[\uFEFF\s]+/, '');
-                    json = JSON.parse(cleanText);
-                } catch (e) {
-                    console.warn("Kuwo JSON parse warning", e);
-                }
-
-                if (json && json.data && json.data.musiclist) {
-                    break;
-                }
-            } catch (e) {
-                if (attempt < RETRY_LIMIT) {
-                    await sleep(300 * (attempt + 1));
-                } else {
-                    console.warn("Proxy failed", e);
-                }
-            }
-        }
-        if (json && json.data && json.data.musiclist) {
-            break;
-        }
-    }
-
-    // ✅ 修复3: 适配你提供的 JSON 结构 (musiclist, artist, name, pic)
-    if (!json || !json.data || !json.data.musiclist) {
-        console.error("Kuwo Fetch Failed or Invalid Data");
-        return null;
-    }
-
+    const url = `https://mobilist.kuwo.cn/list.s?type=songlist&id=${id}&pn=0&rn=500`;
     try {
-        const musicList = json.data.musiclist;
-        // 元数据适配
-        const title = json.data.title || "酷我歌单"; // 接口似乎没返回 title，可能需要前端输入或使用默认
-        const pic = json.data.img || musicList[0]?.img || ""; // 接口用 img 字段
-        const intro = json.data.info || `共 ${musicList.length} 首歌曲`;
+        const json = await fastFetch(url);
+        const list = json?.data?.musiclist || [];
+        const songs: Song[] = list.map((item: any) => ({
+            id: `kw_${item.rid || item.id}`,
+            title: item.name || "未知歌曲",
+            artist: item.artist || "未知歌手",
+            album: item.album || "",
+            coverUrl: ensureHttps(item.img || item.pic || ''),
+            duration: parseInt(item.duration) || 0,
+            source: 'kuwo' as const,
+            url: '',
+            isDetailsLoaded: false,
+            apiKeyword: `${item.name} ${item.artist}`
+        }));
 
-        const songs: Song[] = musicList.map((item: any) => {
-            // ✅ 字段映射：酷我使用 name, artist, img
-            const songName = item.name || "未知歌曲";
-            const artistName = item.artist || "未知歌手";
-            let cover = item.img || "";
-
-            // 修复图片协议
-            if (cover && cover.startsWith('http:')) {
-                cover = cover.replace('http:', 'https:');
-            }
-
-            return {
-                id: `kw_${item.rid || item.id}`,
-                title: songName,
-                artist: artistName,
-                album: item.album || "",
-                coverUrl: cover || 'https://y.gtimg.cn/mediastyle/global/img/cover_like.png',
-                // 酷我 duration 单位是秒
-                duration: parseInt(item.duration) || 0,
-                source: 'kuwo' as const,
-                url: '', // 播放链接需动态获取
-                isDetailsLoaded: false,
-                // ✅ 关键：构造搜索关键词，用于播放时搜索
-                apiKeyword: `${songName} ${artistName}`
-            };
-        });
-
-        const playlist: Playlist = {
+        return {
             id: `kw_pl_${id}`,
-            title: title === "酷我歌单" ? `酷我歌单 (${id})` : title, // 如果没标题，带上ID区分
-            creator: '酷我音乐用户',
-            coverUrl: pic,
-            coverImgStack: songs.slice(0, 3).map(s => s.coverUrl).filter(Boolean),
+            title: json.data?.title || "酷我歌单",
+            creator: '酷我用户',
+            coverUrl: ensureHttps(json.data?.img || songs[0]?.coverUrl),
+            coverImgStack: songs.slice(0, 3).map(s => s.coverUrl),
             songCount: songs.length,
-            description: intro,
-            songs: songs,
+            description: json.data?.info || '',
+            songs,
             apiKeyword: '',
             isLocal: false,
             source: 'kw'
         };
-
-        return playlist;
-
-    } catch (e) {
-        console.error("Kuwo Parse Error:", e);
-        return null;
-    }
+    } catch { return null; }
 };
 
-// --- 网易云歌单导入 ---
-
+/**
+ * 网易云歌单导入
+ */
 export const fetchWangyiPlaylist = async (uid: string): Promise<Playlist | null> => {
-    const cleanUid = uid.trim();
-    if (!cleanUid) return null;
+    const url = `https://node.api.xfabe.com/api/wangyi/userSongs?uid=${encodeURIComponent(uid.trim())}&limit=1000`;
+    try {
+        const json = await fastFetch(url, { skipProxy: true });
+        if (json?.code !== 200 || !json.data?.songs) return null;
 
-    const targetUrl = `https://node.api.xfabe.com/api/wangyi/userSongs?uid=${encodeURIComponent(cleanUid)}&limit=10000`;
-    const proxies = [
-        (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-        (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-        (url: string) => `https://thingproxy.freeboard.io/fetch/${url}`
-    ];
-
-    const urls = proxies.map((createProxyUrl) => createProxyUrl(targetUrl)).concat([targetUrl]);
-    let json: any = null;
-
-    for (const url of urls) {
-        for (let attempt = 0; attempt <= RETRY_LIMIT; attempt++) {
-            try {
-                json = await fetchJsonWithTimeout(url, REQUEST_TIMEOUT_MS);
-                if (json && json.code === 200 && json.data) {
-                    break;
-                }
-            } catch (e) {
-                if (attempt < RETRY_LIMIT) {
-                    await sleep(300 * (attempt + 1));
-                }
-            }
-        }
-        if (json && json.code === 200 && json.data) {
-            break;
-        }
-    }
-
-    if (!json || json.code !== 200 || !json.data || !Array.isArray(json.data.songs)) {
-        console.error("Wangyi Fetch Failed or Invalid Data");
-        return null;
-    }
-
-    const data = json.data;
-    const songs: Song[] = data.songs.map((item: any) => {
-        const title = item.name || '未知歌曲';
-        const artist = item.artistsname || '未知歌手';
-        const durationMs = Number(item.duration) || 0;
-        return {
+        const songs: Song[] = json.data.songs.map((item: any) => ({
             id: `wy_${item.id}`,
-            title,
-            artist,
+            title: item.name,
+            artist: item.artistsname,
             album: item.album || '',
-            coverUrl: item.picurl || '',
-            duration: Math.floor(durationMs / 1000),
+            coverUrl: ensureHttps(item.picurl),
+            duration: Math.floor((item.duration || 0) / 1000),
             source: 'netease',
             url: '',
             isDetailsLoaded: false,
-            apiKeyword: `${title} ${artist}`
+            apiKeyword: `${item.name} ${item.artistsname}`
+        }));
+
+        return {
+            id: `wy_pl_${uid}`,
+            title: json.data.songName || '网易云歌单',
+            creator: json.data.userName || '网易云用户',
+            coverUrl: ensureHttps(json.data.songPic || songs[0]?.coverUrl),
+            coverImgStack: songs.slice(0, 3).map(s => s.coverUrl),
+            songCount: songs.length,
+            description: json.data.userSignature || '',
+            songs,
+            apiKeyword: '',
+            isLocal: false,
+            source: 'wy'
         };
-    });
-
-    const playlist: Playlist = {
-        id: `wy_pl_${cleanUid}`,
-        title: data.songName || '网易云歌单',
-        creator: data.userName || '网易云用户',
-        coverUrl: data.songPic || songs[0]?.coverUrl || '',
-        coverImgStack: songs.slice(0, 3).map(s => s.coverUrl).filter(Boolean),
-        songCount: songs.length,
-        description: data.userSignature || '',
-        songs,
-        apiKeyword: '',
-        isLocal: false,
-        source: 'wy'
-    };
-
-    return playlist;
+    } catch { return null; }
 };
 
-// --- 酷狗歌单导入 ---
-
+/**
+ * 酷狗歌单导入 - 按照要求：完全直连，不走代理
+ */
 export const fetchKugouPlaylist = async (input: string): Promise<Playlist | null> => {
-    const rawInput = input.trim();
-    if (!rawInput) return null;
+    const url = `https://www.hhlqilongzhu.cn/api/QQmusic_ck/kugou_ids.php?id=${encodeURIComponent(input.trim())}&type=list`;
+    try {
+        // 优先直连，失败自动兜底代理规避 CORS/证书问题
+        const json = await fastFetch(url, { skipProxy: true, fallbackToProxy: true });
+        const data = json?.body?.data;
+        if (!data?.info) return null;
 
-    const targetUrl = `https://www.hhlqilongzhu.cn/api/QQmusic_ck/kugou_ids.php?id=${encodeURIComponent(rawInput)}&type=list`;
-    const proxies = [
-        (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-        (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-        (url: string) => `https://thingproxy.freeboard.io/fetch/${url}`
-    ];
-
-    const urls = proxies.map((createProxyUrl) => createProxyUrl(targetUrl)).concat([targetUrl]);
-    let json: any = null;
-
-    for (const url of urls) {
-        for (let attempt = 0; attempt <= RETRY_LIMIT; attempt++) {
-            try {
-                json = await fetchJsonWithTimeout(url, REQUEST_TIMEOUT_MS);
-                if (json && json.status === 200 && json.body && json.body.data) {
-                    break;
-                }
-            } catch (e) {
-                if (attempt < RETRY_LIMIT) {
-                    await sleep(300 * (attempt + 1));
-                }
-            }
-        }
-        if (json && json.status === 200 && json.body && json.body.data) {
-            break;
-        }
-    }
-
-    const data = json?.body?.data;
-    const list = data?.info;
-    if (!json || json.status !== 200 || !data || !Array.isArray(list)) {
-        console.error("Kugou Fetch Failed or Invalid Data");
-        return null;
-    }
-
-    const songs: Song[] = list.map((item: any) => {
-        const title = item.name || '未知歌曲';
-        const artist = Array.isArray(item.singerinfo)
-            ? item.singerinfo.map((s: any) => s.name).filter(Boolean).join(', ')
-            : (item.singername || '未知歌手');
-        const durationMs = Number(item.timelen) || 0;
-        let cover = item.cover || item.trans_param?.union_cover || '';
-        if (cover && cover.includes('{size}')) {
-            cover = cover.replace('{size}', '300');
-        }
-        if (cover && cover.startsWith('http:')) {
-            cover = cover.replace('http:', 'https:');
-        }
-        return {
-            id: `kg_${item.hash || item.audio_id || title}`,
-            title,
-            artist: artist || '未知歌手',
+        const songs: Song[] = data.info.map((item: any) => ({
+            id: `kg_${item.hash || item.audio_id}`,
+            title: item.name,
+            artist: Array.isArray(item.singerinfo) ? item.singerinfo[0]?.name : item.singername,
             album: item.albuminfo?.name || '',
-            coverUrl: cover,
-            duration: Math.floor(durationMs / 1000),
+            coverUrl: ensureHttps((item.cover || '').replace('{size}', '400')),
+            duration: Math.floor((item.timelen || 0) / 1000),
             source: 'kugou',
             url: '',
             isDetailsLoaded: false,
-            apiKeyword: `${title} ${artist || ''}`.trim()
+            apiKeyword: `${item.name} ${item.singername}`
+        }));
+
+        return {
+            id: `kg_pl_${input}`,
+            title: '酷狗歌单',
+            creator: data.userid ? `用户(${data.userid})` : '酷狗用户',
+            coverUrl: songs[0]?.coverUrl || '',
+            coverImgStack: songs.slice(0, 3).map(s => s.coverUrl),
+            songCount: songs.length,
+            description: '',
+            songs,
+            apiKeyword: '',
+            isLocal: false,
+            source: 'kg'
         };
-    });
-
-    const playlist: Playlist = {
-        id: `kg_pl_${data.listid || data.userid || rawInput}`,
-        title: '酷狗歌单',
-        creator: data.userid ? `酷狗用户 ${data.userid}` : '酷狗用户',
-        coverUrl: songs[0]?.coverUrl || '',
-        coverImgStack: songs.slice(0, 3).map(s => s.coverUrl).filter(Boolean),
-        songCount: songs.length,
-        description: '',
-        songs,
-        apiKeyword: '',
-        isLocal: false,
-        source: 'kg'
-    };
-
-    return playlist;
+    } catch { return null; }
 };

@@ -143,9 +143,21 @@ export const dbClearLocalSongs = async () => {
 };
 
 // ---------------- 播放历史 ----------------
-export const dbAppendPlayHistory = async (song: Song, playedSeconds: number, ts = Date.now()) => {
+const emitListenHistoryUpdated = () => {
+    try {
+        window.dispatchEvent(new Event('listen-history-updated'));
+    } catch { }
+};
+
+export const dbAppendPlayHistory = async (
+    song: Song,
+    playedSeconds: number,
+    ts = Date.now(),
+    recordId?: string
+) => {
+    const id = recordId || `${ts}_${song.id}`;
     const rec: PlayHistoryRecord = {
-        id: `${ts}_${song.id}`,
+        id,
         ts,
         dayKey: toDayKey(ts),
         weekKey: toIsoWeekKey(ts),
@@ -161,6 +173,7 @@ export const dbAppendPlayHistory = async (song: Song, playedSeconds: number, ts 
     };
     await putItem(STORE_PLAY_HISTORY, rec);
     maybeAutoBackup();
+    emitListenHistoryUpdated();
 };
 
 export const dbGetAllPlayHistory = () => getAllItems<PlayHistoryRecord>(STORE_PLAY_HISTORY);
@@ -170,6 +183,7 @@ export const dbClearPlayHistory = async () => {
     const db = await openDB();
     const transaction = db.transaction(STORE_PLAY_HISTORY, 'readwrite');
     transaction.objectStore(STORE_PLAY_HISTORY).clear();
+    emitListenHistoryUpdated();
 };
 
 export const dbGetPlayHistoryByDay = async (dayKey: string) => {
@@ -274,8 +288,13 @@ export const clearDatabase = async () => {
     tx.objectStore(STORE_PLAY_HISTORY).clear();
 };
 
-export const addListenRecord = async (song: Song, playedSeconds: number, ts = Date.now()) => {
-    await dbAppendPlayHistory(song, playedSeconds, ts);
+export const addListenRecord = async (
+    song: Song,
+    playedSeconds: number,
+    ts = Date.now(),
+    recordId?: string
+) => {
+    await dbAppendPlayHistory(song, playedSeconds, ts, recordId);
 };
 
 export const getListenRecords = async (): Promise<ListenRecord[]> => {

@@ -21,6 +21,16 @@ export const useAudioPlayer = () => {
 
     const [mode, setMode] = useState<Mode>('sequence');
     const fallbackTriedRef = useRef<string | null>(null);
+    const currentSongRef = useRef<Song | null>(null);
+    const isPlayingRef = useRef(false);
+
+    useEffect(() => {
+        currentSongRef.current = currentSong;
+    }, [currentSong]);
+
+    useEffect(() => {
+        isPlayingRef.current = isPlaying;
+    }, [isPlaying]);
 
     // 统计：当前歌曲播放会话
     const statRef = useRef({
@@ -28,10 +38,11 @@ export const useAudioPlayer = () => {
         startedAt: 0,
         lastTick: 0,
         played: 0,
+        sessionId: '' as string,
     });
 
     const resetStat = () => {
-        statRef.current = { songId: '', startedAt: 0, lastTick: 0, played: 0 };
+        statRef.current = { songId: '', startedAt: 0, lastTick: 0, played: 0, sessionId: '' };
     };
 
     const flushStat = useCallback(async () => {
@@ -41,7 +52,7 @@ export const useAudioPlayer = () => {
 
         const played = Math.floor(s.played);
         if (played >= 3) {
-            await addListenRecord(currentSong, played);
+            await addListenRecord(currentSong, played, s.startedAt || Date.now(), s.sessionId || undefined);
         }
         resetStat();
     }, [currentSong]);
@@ -52,6 +63,7 @@ export const useAudioPlayer = () => {
         statRef.current.startedAt = now;
         statRef.current.lastTick = now;
         statRef.current.played = 0;
+        statRef.current.sessionId = `${now}_${song.id}`;
     };
 
     // --- 核心播放逻辑 ---
@@ -169,7 +181,8 @@ export const useAudioPlayer = () => {
         audio.addEventListener('timeupdate', () => {
             setProgress(audio.currentTime || 0);
 
-            if (isPlaying && currentSong && statRef.current.songId === currentSong.id) {
+            const activeSong = currentSongRef.current;
+            if (isPlayingRef.current && activeSong && statRef.current.songId === activeSong.id) {
                 const now = Date.now();
                 const dt = (now - statRef.current.lastTick) / 1000;
                 if (dt > 0 && dt < 2) statRef.current.played += dt;
@@ -184,10 +197,11 @@ export const useAudioPlayer = () => {
             setIsLoading(false);
             setIsPlaying(false);
             // 本地文件损坏或缺失时，尝试在线搜索获取
-            if (currentSong && currentSong.id !== fallbackTriedRef.current) {
-                fallbackTriedRef.current = currentSong.id;
-                fetchSongDetail({ ...currentSong, url: '', isDetailsLoaded: false }).then((detailed) => {
-                    if (detailed.url && detailed.id === currentSong.id) {
+            const activeSong = currentSongRef.current;
+            if (activeSong && activeSong.id !== fallbackTriedRef.current) {
+                fallbackTriedRef.current = activeSong.id;
+                fetchSongDetail({ ...activeSong, url: '', isDetailsLoaded: false }).then((detailed) => {
+                    if (detailed.url && detailed.id === activeSong.id) {
                         executePlay(detailed);
                     }
                 }).catch(() => { });
@@ -249,8 +263,7 @@ export const useAudioPlayer = () => {
             if (!s.songId || s.songId !== currentSong.id) return;
             const played = Math.floor(s.played);
             if (played >= 3) {
-                addListenRecord(currentSong, played);
-                beginStat(currentSong); // 重置计时，继续累积
+                addListenRecord(currentSong, played, s.startedAt || Date.now(), s.sessionId || undefined);
             }
         }, 15000); // 每 15 秒尝试一次
 
@@ -321,6 +334,26 @@ export const useAudioPlayer = () => {
         window.webapp?.toast?.('已添加到队列');
     };
 
+    const addToNext = (song: Song) => {
+        setPlaylist(prev => {
+            if (prev.some(s => s.id === song.id)) return prev;
+
+            if (prev.length === 0) {
+                return [song];
+            }
+
+            if (currentIndex < 0) {
+                return [...prev, song];
+            }
+
+            const insertAt = Math.min(currentIndex + 1, prev.length);
+            const next = [...prev];
+            next.splice(insertAt, 0, song);
+            return next;
+        });
+        window.webapp?.toast?.('已设为下一首播放');
+    };
+
     const addAllToQueue = (songs: Song[]) => {
         setPlaylist(prev => {
             const map = new Map(prev.map(s => [s.id, s]));
@@ -383,6 +416,7 @@ export const useAudioPlayer = () => {
         playList,
 
         addToQueue,
+        addToNext,
         addAllToQueue,
 
         setProgress: setProgressHandler,

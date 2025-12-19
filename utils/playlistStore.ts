@@ -181,7 +181,7 @@ export const saveImportedPlaylist = async (playlist: Playlist): Promise<boolean>
         list[index] = { ...list[index], ...playlist, updatedAt: Date.now() };
     } else {
         // 新增
-        playlist.source = 'qq'; // 强制标记来源
+        playlist.source = playlist.source || 'qq';
         playlist.isLocal = false; // 标记为非本地自建
         playlist.createdAt = Date.now();
         list.unshift(playlist); // 插入到前面 (仅次于置顶项)

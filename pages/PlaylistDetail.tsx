@@ -9,6 +9,7 @@ import { SongItem } from '../components/SongItem';
 import { getDynamicPlaylist, fetchSongDetail } from '../utils/api';
 import { getPlaylistById, reorderPlaylistSongs, batchRemoveSongsFromPlaylist, updatePlaylistInfo, getUserPlaylists, addSongToPlaylist, removePlaylist } from '../utils/playlistStore';
 import { useSongActions } from '../hooks/useSongActions';
+import { getOnlinePlaylistConfigIdFromPlaylist, readOnlinePlaylistFavorites, writeOnlinePlaylistFavorites, ONLINE_PLAYLIST_FAVORITES_EVENT } from '../utils/onlinePlaylistFavorites';
 import AddToPlaylistModal from '../components/AddToPlaylistModal'; // ✅ 引入新组件
 
 interface PlaylistDetailProps {
@@ -18,6 +19,7 @@ interface PlaylistDetailProps {
     onPlaySong: (song: Song) => void;
     onPlayList: (songs: Song[]) => void;
     onAddToQueue: (song: Song) => void;
+    onAddToNext: (song: Song) => void;
     onAddAllToQueue?: (songs: Song[]) => void;
 }
 
@@ -30,6 +32,7 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
     onPlaySong,
     onPlayList,
     onAddToQueue,
+    onAddToNext,
     onAddAllToQueue
 }) => {
     // --- 状态管理 ---
@@ -56,10 +59,12 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
     const [editCover, setEditCover] = useState('');
 
     // 引入 SongActions 用于批量操作
-    const songActions = useSongActions({ addToQueue: onAddToQueue, addAllToQueue: onAddAllToQueue });
+    const songActions = useSongActions({ addToQueue: onAddToQueue, addToNext: onAddToNext, addAllToQueue: onAddAllToQueue });
 
     const isMountedRef = useRef(true);
     const isLocalPlaylist = useMemo(() => !playlist.apiKeyword, [playlist.apiKeyword]);
+    const onlineConfigId = useMemo(() => getOnlinePlaylistConfigIdFromPlaylist(playlist), [playlist]);
+    const [isOnlineFavorite, setIsOnlineFavorite] = useState(false);
     const isFavoritePlaylist = useMemo(() => playlist.title === '我喜欢', [playlist.title]);
 
     // 计算显示封面
@@ -139,6 +144,23 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
         };
     }, [playlist.id, playlist.apiKeyword]);
 
+    useEffect(() => {
+        const refreshOnlineFav = () => {
+            if (!onlineConfigId) {
+                setIsOnlineFavorite(false);
+                return;
+            }
+            const set = readOnlinePlaylistFavorites();
+            setIsOnlineFavorite(set.has(onlineConfigId));
+        };
+
+        refreshOnlineFav();
+        window.addEventListener(ONLINE_PLAYLIST_FAVORITES_EVENT, refreshOnlineFav);
+        return () => {
+            window.removeEventListener(ONLINE_PLAYLIST_FAVORITES_EVENT, refreshOnlineFav);
+        };
+    }, [onlineConfigId]);
+
     // --- 播放逻辑 ---
     const handlePlayAll = () => {
         if (songs.length > 0) {
@@ -204,6 +226,20 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
         onBack(); // 返回上一页
     };
 
+    const toggleOnlineFavorite = () => {
+        if (!onlineConfigId) return;
+        const next = readOnlinePlaylistFavorites();
+        if (next.has(onlineConfigId)) {
+            next.delete(onlineConfigId);
+            window.webapp?.toast?.('已取消收藏');
+        } else {
+            next.add(onlineConfigId);
+            window.webapp?.toast?.('已收藏歌单');
+        }
+        writeOnlinePlaylistFavorites(next);
+        setIsOnlineFavorite(next.has(onlineConfigId));
+    };
+
     return (
         <div className="h-full overflow-y-auto no-scrollbar  bg-[#0f172a] pb-20 animate-in slide-in-from-bottom-10 duration-300 relative">
 
@@ -239,6 +275,15 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                                     {!isLocalPlaylist && (
                                         <button onClick={() => { window.webapp?.toast?.('分享功能开发中'); setShowMoreMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-white/5 text-sm text-white flex items-center gap-2">
                                             <Share2 size={16} /> 分享歌单
+                                        </button>
+                                    )}
+                                    {!isLocalPlaylist && onlineConfigId && (
+                                        <button
+                                            onClick={() => { toggleOnlineFavorite(); setShowMoreMenu(false); }}
+                                            className="w-full text-left px-4 py-3 hover:bg-white/5 text-sm text-white flex items-center gap-2"
+                                        >
+                                            <Heart size={16} className={isOnlineFavorite ? 'fill-current text-rose-400' : ''} />
+                                            {isOnlineFavorite ? '取消收藏' : '收藏歌单'}
                                         </button>
                                     )}
                                     <button
@@ -398,16 +443,17 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                                     )}
 
                                     <div className="flex-1 min-w-0" onClick={() => bulkMode ? toggleSelect(song.id) : null}>
-                                        <SongItem
-                                            index={idx}
-                                            song={song}
-                                            isActive={!bulkMode && currentSong?.id === song.id}
-                                            onPlaySong={!bulkMode ? onPlaySong : undefined} // 批量模式下禁用直接播放
-                                            onAddToQueue={onAddToQueue}
-                                            showCover={false}
-                                            showIndex={!bulkMode}
-                                            showMoreButton={!bulkMode}
-                                        />
+                                            <SongItem
+                                                index={idx}
+                                                song={song}
+                                                isActive={!bulkMode && currentSong?.id === song.id}
+                                                onPlaySong={!bulkMode ? onPlaySong : undefined} // 批量模式下禁用直接播放
+                                                onAddToQueue={onAddToQueue}
+                                                onAddToNext={onAddToNext}
+                                                showCover={false}
+                                                showIndex={!bulkMode}
+                                                showMoreButton={!bulkMode}
+                                            />
                                     </div>
 
                                     {/* 排序按钮 (仅非批量本地模式显示) */}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { Song, Playlist } from '../types';
 import { getDynamicPlaylist, fetchSongDetail } from '../utils/api';
 import { DYNAMIC_PLAYLIST_CONFIG } from '../constants';
@@ -14,35 +14,7 @@ import { Autoplay, Pagination } from 'swiper/modules';
 import 'swiper/css';
 import 'swiper/css/pagination';
 
-/* =========================
- * 封面缓存（歌单三图）
- * ========================= */
 
-const COVER_CACHE_KEY = 'hm_home_playlist_covers_v1';
-
-type CoverCache = Record<
-  string,
-  {
-    covers: string[];
-    ts: number;
-  }
->;
-
-const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 小时
-
-const readCoverCache = (): CoverCache => {
-  try {
-    return JSON.parse(sessionStorage.getItem(COVER_CACHE_KEY) || '{}');
-  } catch {
-    return {};
-  }
-};
-
-const writeCoverCache = (cache: CoverCache) => {
-  try {
-    sessionStorage.setItem(COVER_CACHE_KEY, JSON.stringify(cache));
-  } catch { }
-};
 
 /* =========================
  * 样式常量
@@ -113,7 +85,9 @@ const Home: React.FC<HomeProps> = ({
           songCount:30,
           songs: data,
           description: '每日自动生成的推荐歌单',
+          apiKeyword: '热门',
           isLocal: false,
+          source: 'qq'
         };
         setDailyPlaylist(pl);
       }
@@ -179,51 +153,7 @@ const Home: React.FC<HomeProps> = ({
     }
   };
 
-  /* =========================
-   * 歌单三图封面（真实 API）
-   * ========================= */
-
-  const loadPlaylistCovers = async (pl: Playlist) => {
-    if (!pl.apiKeyword) return;
-    if (loadingCoverSet.current.has(pl.id)) return;
-
-    loadingCoverSet.current.add(pl.id);
-
-    const cache = readCoverCache();
-    const cached = cache[pl.id];
-
-    if (cached && Date.now() - cached.ts < CACHE_TTL) {
-      setPlaylists(prev =>
-        prev.map(p => (p.id === pl.id ? { ...p, coverImgStack: cached.covers } : p))
-      );
-      loadingCoverSet.current.delete(pl.id);
-      return;
-    }
-
-    try {
-      const songs = await getDynamicPlaylist(pl.apiKeyword);
-      const top3 = songs.slice(0, 3);
-
-      const detailed = await Promise.all(
-        top3.map(s => fetchSongDetail(s).catch(() => s))
-      );
-
-      const covers = detailed.map(s => s.coverUrl).filter(Boolean).slice(0, 3);
-
-      if (covers.length && isMountedRef.current) {
-        setPlaylists(prev =>
-          prev.map(p => (p.id === pl.id ? { ...p, coverImgStack: covers } : p))
-        );
-
-        cache[pl.id] = { covers, ts: Date.now() };
-        writeCoverCache(cache);
-      }
-    } catch (e) {
-      console.warn('获取歌单封面失败', e);
-    } finally {
-      loadingCoverSet.current.delete(pl.id);
-    }
-  };
+  
 
   /* =========================
    * 初始化
@@ -252,8 +182,6 @@ const Home: React.FC<HomeProps> = ({
 
     setPlaylists(initPlaylists);
 
-    // 后台加载歌单封面（有缓存则直接使用，TTL 由 loadPlaylistCovers 控制）
-    initPlaylists.slice(0, 6).forEach(loadPlaylistCovers);
 
     // ✅ 关键：加载每日推荐（首屏/刷新触发一次，之后命中缓存）
     loadDailyRecommend();
@@ -285,7 +213,7 @@ const Home: React.FC<HomeProps> = ({
       </div>
 
       {/* Banner */}
-      <div className="px-6 mb-8 relative h-48">
+      <div className="px-6 mb-6 relative h-40">
         <Swiper
   modules={[Autoplay, Pagination]}
   slidesPerView={1}
@@ -303,11 +231,11 @@ const Home: React.FC<HomeProps> = ({
             <SwiperSlide key={banner.id}>
               <div className="relative w-full h-full">
                 <img src={banner.image} className="w-full h-full object-cover" />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent p-6 flex flex-col justify-end">
-                  <span className="text-xs font-bold text-indigo-400 mb-1">
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent p-4 flex flex-col justify-end">
+                  <span className="text-[10px] font-bold text-indigo-400 mb-1">
                     {banner.tag}
                   </span>
-                  <h2 className="text-xl font-bold text-white">
+                  <h2 className="text-lg font-bold text-white">
                     {banner.title}
                   </h2>
                 </div>
@@ -318,15 +246,15 @@ const Home: React.FC<HomeProps> = ({
       </div>
 
       {/* 每日推荐 */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between px-6 mb-4">
-          <h2 className="text-lg font-bold text-slate-800 text-white ">每日推荐</h2>
+      <div className="mb-6">
+        <div className="flex items-center justify-between px-6 mb-3">
+          <h2 className="text-base font-bold text-slate-800 text-white">每日推荐</h2>
           <button
             onClick={() => dailyPlaylist && onNavigatePlaylist(dailyPlaylist)}
-            className="text-xs text-indigo-400 flex items-center"
+            className="text-[10px] text-indigo-400 flex items-center"
             disabled={!dailyPlaylist}
           >
-            查看全部 <ChevronRight size={14} />
+            查看全部 <ChevronRight size={12} />
           </button>
         </div>
 
@@ -335,21 +263,21 @@ const Home: React.FC<HomeProps> = ({
             <Loader2 className="animate-spin text-indigo-500" />
           </div>
         ) : (
-          <div className="flex overflow-x-auto no-scrollbar px-6 gap-4">
+          <div className="flex overflow-x-auto no-scrollbar px-6 gap-3">
             {recSongs.map(song => (
               <div
                 key={song.id}
                 onClick={() => onPlaySong(song)}
-                className="w-32 flex-shrink-0 cursor-pointer"
+                className="w-28 flex-shrink-0 cursor-pointer"
               >
-                <div className="relative w-32 h-32 mb-2 rounded-xl overflow-hidden shadow-md  bg-[#0f172a]">
+                <div className="relative w-28 h-28 mb-1.5 rounded-lg overflow-hidden shadow-md bg-[#0f172a]">
                   <img src={song.coverUrl} className="w-full h-full object-cover" />
                   <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 flex items-center justify-center">
                     <Play className="text-white fill-white" />
                   </div>
                 </div>
-                <div className="text-sm font-bold text-white truncate">{song.title}</div>
-                <div className="text-xs text-slate-400 truncate">{song.artist}</div>
+                <div className="text-xs font-bold text-white truncate">{song.title}</div>
+                <div className="text-[10px] text-slate-400 truncate">{song.artist}</div>
               </div>
             ))}
           </div>
@@ -358,32 +286,29 @@ const Home: React.FC<HomeProps> = ({
 
       {/* 甄选歌单 */}
       <div className="px-6 mb-8">
-        <h2 className="text-lg font-bold text-white mb-4">甄选歌单</h2>
+        <h2 className="text-base font-bold text-white mb-3">甄选歌单</h2>
 
         <div className="grid grid-cols-2 gap-3">
           {playlists.slice(0, 6).map((playlist, idx) => {
             const bg = CARD_STYLES[idx % CARD_STYLES.length];
-            const stack = playlist.coverImgStack || [];
 
             return (
               <div
                 key={playlist.id}
                 onClick={() => onNavigatePlaylist(playlist)}
-                className={`relative h-28 ${bg} rounded-xl p-3 overflow-hidden cursor-pointer`}
+                className={`relative h-24 ${bg} rounded-2xl p-2.5 overflow-hidden cursor-pointer border border-white/10 shadow-[0_8px_24px_rgba(0,0,0,0.25)]`}
               >
-                <div className="absolute -right-10 -bottom-3 w-28 h-28 pointer-events-none">
-                  <img src={stack[2]} className="absolute bottom-4 right-10 w-16 h-16 rounded-lg opacity-60" />
-                  <img src={stack[1]} className="absolute bottom-5 right-5 w-16 h-16 rounded-lg opacity-85" />
-                  <img src={stack[0]} className="absolute bottom-6 right-2 w-16 h-16 rounded-lg" />
-                </div>
-
-                <div className="relative z-10 pr-12">
-                  <h3 className="text-base font-bold text-white line-clamp-2">
+                  <div className="absolute inset-0 bg-white/10 backdrop-blur-[6px] border border-white/10" />
+                <div className="relative z-10 pr-8 space-y-1.5">
+                  <h3 className="text-sm font-bold text-white line-clamp-2 leading-relaxed">
                     {playlist.title}
                   </h3>
-                  <p className="text-[10px] text-white/80 line-clamp-2">
+                  <p className="mt-2 text-[9px] text-white/80 line-clamp-2">
                     {playlist.description}
                   </p>
+                </div>
+                <div className="absolute right-[-20px] bottom-[-40px] w-[140%] text-white/15 text-6xl font-serif italic rotate-[-25deg] select-none pointer-events-none text-right">
+                  甄
                 </div>
               </div>
             );
@@ -402,3 +327,4 @@ const Home: React.FC<HomeProps> = ({
 };
 
 export default Home;
+
