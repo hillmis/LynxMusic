@@ -1,12 +1,45 @@
 import { Playlist, Song } from './types';
-import { saveBackupToFile } from './fileSystem';
+import { 
+    saveBackupToFile, 
+    getBackupList, 
+    deleteFileSafely, 
+    PATHS,
+    safeToast 
+} from './fileSystem';
+import { writeOnlinePlaylistFavorites } from './onlinePlaylistFavorites';
+import { REWARD_EVENTS, setDownloadChances, setPointsBalance } from './rewards';
 
-const DB_NAME = 'HillMusicDB';
+const DB_NAME = 'LynxMusicDB';
 const DB_VERSION = 3;
 
 const STORE_PLAYLISTS = 'playlists';
 const STORE_LOCAL_SONGS = 'local_songs';
 const STORE_PLAY_HISTORY = 'play_history';
+const TOTAL_LISTEN_SECONDS_KEY = 'hm_total_listen_seconds_v1';
+const CLEAR_PLAY_HISTORY_TS_KEY = 'hm_play_history_clear_ts';
+const PREVIEW_COVER_CACHE_KEY = 'hm_preview_covers_v1';
+
+// 自动备份相关常量
+const AUTO_BACKUP_PREFIX = 'auto_backup';
+const HISTORY_ARCHIVE_PREFIX = 'history_archive';
+const MAX_AUTO_BACKUPS = 10;
+
+// Reward & task storage keys that need to be captured in backups
+const REWARD_STORAGE_KEYS = {
+    points: 'hm_points_balance_v2',
+    downloadChances: 'hm_download_chances_v1',
+    privilege: 'hm_download_privilege_v1',
+};
+
+const TASK_STORAGE_KEYS = {
+    signIns: 'hm_sign_in_history_v2',
+    taskProgress: 'hm_task_progress_v2',
+    collectStat: 'hm_collect_stat_v1',
+    discoverVisit: 'hm_discover_visit_v1',
+    quarkTransfer: 'hm_quark_transfer_v1'
+};
+
+const ONLINE_FAV_STORAGE_KEY = 'hm_fav_playlists_v1';
 
 export interface PlayHistoryRecord {
     id: string;              // `${ts}_${songId}`
@@ -51,7 +84,110 @@ const toIsoWeekKey = (ts: number) => {
     return `${date.getUTCFullYear()}-W${pad2(weekNo)}`;
 };
 
-// 初始化数据库
+const readTotalListenSeconds = () => {
+    const raw = localStorage.getItem(TOTAL_LISTEN_SECONDS_KEY);
+    const val = raw ? Number(raw) : 0;
+    if (!Number.isFinite(val)) return 0;
+    return Math.max(0, Math.floor(val));
+};
+
+const writeTotalListenSeconds = (val: number) => {
+    localStorage.setItem(TOTAL_LISTEN_SECONDS_KEY, String(Math.max(0, Math.floor(val))));
+};
+
+const bumpTotalListenSeconds = (delta: number) => {
+    if (!delta || delta <= 0) return;
+    writeTotalListenSeconds(readTotalListenSeconds() + Math.max(0, Math.floor(delta)));
+};
+
+const ensureTotalListenSeconds = (minVal: number) => {
+    const current = readTotalListenSeconds();
+    if (minVal > current) {
+        writeTotalListenSeconds(minVal);
+        return minVal;
+    }
+    return current;
+};
+
+const readClearBeforeTs = () => {
+    const raw = localStorage.getItem(CLEAR_PLAY_HISTORY_TS_KEY);
+    const val = raw ? Number(raw) : 0;
+    return Number.isFinite(val) ? val : 0;
+};
+
+const setClearBeforeTs = (ts: number) => {
+    localStorage.setItem(CLEAR_PLAY_HISTORY_TS_KEY, String(ts));
+};
+
+const readJson = <T,>(key: string, fallback: T): T => {
+    try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return fallback;
+        return JSON.parse(raw) as T;
+    } catch {
+        return fallback;
+    }
+};
+
+const writeJson = (key: string, value: any) => {
+    try {
+        if (value === undefined || value === null) {
+            localStorage.removeItem(key);
+            return;
+        }
+        localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+        // ignore persistence errors
+    }
+};
+
+// --- Snapshot Helpers ---
+const applyRewardSnapshot = (snapshot?: any) => {
+    if (!snapshot) return;
+    if (typeof snapshot.points === 'number') setPointsBalance(snapshot.points);
+    if (typeof snapshot.downloadChances === 'number') setDownloadChances(snapshot.downloadChances);
+    const privileged = snapshot.hasPrivilege === true;
+    if (privileged) {
+        localStorage.setItem(REWARD_STORAGE_KEYS.privilege, '1');
+    } else {
+        localStorage.removeItem(REWARD_STORAGE_KEYS.privilege);
+    }
+    try {
+        window.dispatchEvent(new CustomEvent(REWARD_EVENTS.privilegeChanged, { detail: { privileged } }));
+    } catch { }
+};
+
+const applyTaskSnapshot = (snapshot?: any) => {
+    if (!snapshot) return;
+    if (snapshot.signIns !== undefined) writeJson(TASK_STORAGE_KEYS.signIns, snapshot.signIns);
+    if (snapshot.taskProgress !== undefined) writeJson(TASK_STORAGE_KEYS.taskProgress, snapshot.taskProgress);
+    if (snapshot.collectStat !== undefined) writeJson(TASK_STORAGE_KEYS.collectStat, snapshot.collectStat);
+    if (snapshot.discoverVisit !== undefined) writeJson(TASK_STORAGE_KEYS.discoverVisit, snapshot.discoverVisit);
+    if (snapshot.quarkTransfer !== undefined) writeJson(TASK_STORAGE_KEYS.quarkTransfer, snapshot.quarkTransfer);
+};
+
+const applyFavoritesSnapshot = (snapshot?: any) => {
+    if (!snapshot) return;
+    if (snapshot.onlinePlaylists) {
+        const set = new Set<string>(
+            Array.isArray(snapshot.onlinePlaylists)
+                ? snapshot.onlinePlaylists.map((id: any) => String(id))
+                : []
+        );
+        writeOnlinePlaylistFavorites(set);
+    }
+    if (snapshot.previewCoverCache !== undefined) {
+        writeJson(PREVIEW_COVER_CACHE_KEY, snapshot.previewCoverCache);
+    }
+};
+
+const applySettingsSnapshot = (snapshot?: any) => {
+    if (!snapshot) return;
+    if (typeof snapshot.apiHost === 'string') localStorage.setItem('setting_api_host', snapshot.apiHost);
+    if (typeof snapshot.apiKey === 'string') localStorage.setItem('setting_api_key', snapshot.apiKey);
+};
+
+// --- 数据库基础操作 ---
 export const openDB = (): Promise<IDBDatabase> => {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -80,7 +216,6 @@ export const openDB = (): Promise<IDBDatabase> => {
     });
 };
 
-// 通用 CRUD
 export const putItem = async <T>(storeName: string, item: T): Promise<T> => {
     const db = await openDB();
     return new Promise((resolve, reject) => {
@@ -156,6 +291,12 @@ export const dbAppendPlayHistory = async (
     recordId?: string
 ) => {
     const id = recordId || `${ts}_${song.id}`;
+    let previousSeconds = 0;
+    try {
+        const existing = await getItem<PlayHistoryRecord>(STORE_PLAY_HISTORY, id);
+        previousSeconds = Math.max(0, Math.floor(existing?.playedSeconds || 0));
+    } catch { }
+
     const rec: PlayHistoryRecord = {
         id,
         ts,
@@ -172,17 +313,16 @@ export const dbAppendPlayHistory = async (
         source: (song as any).source
     };
     await putItem(STORE_PLAY_HISTORY, rec);
-    maybeAutoBackup();
+    const delta = Math.max(0, rec.playedSeconds - previousSeconds);
+    bumpTotalListenSeconds(delta);
     emitListenHistoryUpdated();
 };
 
 export const dbGetAllPlayHistory = () => getAllItems<PlayHistoryRecord>(STORE_PLAY_HISTORY);
 
-// ✅ 新增：清空播放历史
 export const dbClearPlayHistory = async () => {
-    const db = await openDB();
-    const transaction = db.transaction(STORE_PLAY_HISTORY, 'readwrite');
-    transaction.objectStore(STORE_PLAY_HISTORY).clear();
+    await backupPlayHistoryToFile();
+    setClearBeforeTs(Date.now());
     emitListenHistoryUpdated();
 };
 
@@ -197,7 +337,8 @@ export const dbGetPlayHistoryByDay = async (dayKey: string) => {
     });
 };
 
-// --- 备份与恢复 ---
+// ---------------- 备份与恢复 ----------------
+
 export const exportFullData = async (): Promise<string> => {
     try {
         const [playlists, localSongs, playHistory] = await Promise.all([
@@ -206,14 +347,44 @@ export const exportFullData = async (): Promise<string> => {
             dbGetAllPlayHistory(),
         ]);
 
+        const rewardsSnapshot = {
+            points: Number(localStorage.getItem(REWARD_STORAGE_KEYS.points) || 0) || 0,
+            downloadChances: Number(localStorage.getItem(REWARD_STORAGE_KEYS.downloadChances) || 0) || 0,
+            hasPrivilege: localStorage.getItem(REWARD_STORAGE_KEYS.privilege) === '1'
+        };
+
         const backupData = {
             meta: {
-                version: '1.2',
-                appName: 'HillMusic',
+                version: '1.3',
+                appName: 'LynxMusic',
                 timestamp: Date.now(),
                 device: navigator.userAgent
             },
-            data: { playlists, localSongs, playHistory }
+            data: {
+                playlists,
+                localSongs,
+                playHistory,
+                stats: {
+                    totalListenSeconds: readTotalListenSeconds(),
+                    clearBeforeTs: readClearBeforeTs()
+                },
+                tasks: {
+                    signIns: readJson(TASK_STORAGE_KEYS.signIns, []),
+                    taskProgress: readJson(TASK_STORAGE_KEYS.taskProgress, {}),
+                    collectStat: readJson(TASK_STORAGE_KEYS.collectStat, null),
+                    discoverVisit: readJson(TASK_STORAGE_KEYS.discoverVisit, null),
+                    quarkTransfer: readJson(TASK_STORAGE_KEYS.quarkTransfer, null)
+                },
+                favorites: {
+                    onlinePlaylists: readJson<string[]>(ONLINE_FAV_STORAGE_KEY, []),
+                    previewCoverCache: readJson(PREVIEW_COVER_CACHE_KEY, {})
+                },
+                rewardsSnapshot,
+                settings: {
+                    apiHost: localStorage.getItem('setting_api_host') || '',
+                    apiKey: localStorage.getItem('setting_api_key') || ''
+                }
+            }
         };
         return JSON.stringify(backupData, null, 2);
     } catch (e) {
@@ -228,11 +399,12 @@ export const importFullData = async (
     try {
         const backup = JSON.parse(jsonString);
         if (!backup.meta || !backup.data) {
-            return { success: false, msg: '无效的备份文件格式' };
+            return { success: false, msg: 'Invalid backup file' };
         }
 
         const db = await openDB();
         const tx = db.transaction([STORE_PLAYLISTS, STORE_LOCAL_SONGS, STORE_PLAY_HISTORY], 'readwrite');
+        let importedPlaySeconds = 0;
 
         if (backup.data.playlists && Array.isArray(backup.data.playlists)) {
             const plStore = tx.objectStore(STORE_PLAYLISTS);
@@ -246,46 +418,94 @@ export const importFullData = async (
 
         if (backup.data.playHistory && Array.isArray(backup.data.playHistory)) {
             const phStore = tx.objectStore(STORE_PLAY_HISTORY);
-            backup.data.playHistory.forEach((item: any) => phStore.put(item));
+            backup.data.playHistory.forEach((item: any) => {
+                phStore.put(item);
+                importedPlaySeconds += Math.max(0, Math.floor(Number(item?.playedSeconds) || 0));
+            });
         }
 
         return new Promise((resolve) => {
-            tx.oncomplete = () =>
+            tx.oncomplete = () => {
+                ensureTotalListenSeconds(importedPlaySeconds);
+                try {
+                    if (backup.data?.stats) {
+                        const targetSeconds = Math.max(
+                            importedPlaySeconds,
+                            Number(backup.data.stats.totalListenSeconds) || 0
+                        );
+                        ensureTotalListenSeconds(targetSeconds);
+                        if (backup.data.stats.clearBeforeTs !== undefined) {
+                            setClearBeforeTs(Number(backup.data.stats.clearBeforeTs) || 0);
+                        }
+                    }
+                    if (backup.data?.rewardsSnapshot) applyRewardSnapshot(backup.data.rewardsSnapshot);
+                    if (backup.data?.tasks) applyTaskSnapshot(backup.data.tasks);
+                    if (backup.data?.favorites) applyFavoritesSnapshot(backup.data.favorites);
+                    if (backup.data?.settings) applySettingsSnapshot(backup.data.settings);
+                } catch (err) {
+                    console.warn('Apply backup extras failed', err);
+                }
                 resolve({
                     success: true,
-                    msg: `数据恢复成功 (备份时间: ${new Date(backup.meta.timestamp).toLocaleString()})`
+                    msg: `Restore success (backup: ${new Date(backup.meta.timestamp).toLocaleString()})`
                 });
-            tx.onerror = () => resolve({ success: false, msg: '数据库写入失败' });
+            };
+            tx.onerror = () => resolve({ success: false, msg: 'Database write failed' });
         });
     } catch (e) {
         console.error('Import failed', e);
-        return { success: false, msg: '解析备份文件失败' };
+        return { success: false, msg: 'Failed to parse backup file' };
     }
 };
 
-const AUTO_BACKUP_INTERVAL = 6 * 60 * 60 * 1000; // 6 小时
-const AUTO_BACKUP_KEY = 'hm_auto_backup_ts';
+export const createFullBackup = async (options?: { fileName?: string; overwrite?: boolean; silent?: boolean }): Promise<boolean> => {
+    const data = await exportFullData();
+    const ok = saveBackupToFile(data, 'backup', {
+        fileName: options?.fileName,
+        overwrite: options?.overwrite ?? !!options?.fileName,
+        silent: options?.silent
+    });
+    return !!ok;
+};
 
-async function maybeAutoBackup() {
+export const backupPlayHistoryToFile = async () => {
     try {
-        const last = Number(localStorage.getItem(AUTO_BACKUP_KEY) || 0);
-        if (Date.now() - last < AUTO_BACKUP_INTERVAL) return;
-
-        const data = await exportFullData();
-        const ok = saveBackupToFile(data);
-        if (ok) {
-            localStorage.setItem(AUTO_BACKUP_KEY, String(Date.now()));
-        }
+        const history = await dbGetAllPlayHistory();
+        if (!history.length) return false;
+        const totalSeconds = history.reduce((acc, cur) => acc + (cur.playedSeconds || 0), 0);
+        const payload = {
+            meta: {
+                version: '1.0',
+                type: 'play_history',
+                timestamp: Date.now(),
+                count: history.length,
+                totalSeconds
+            },
+            data: history
+        };
+        return saveBackupToFile(JSON.stringify(payload, null, 2), 'play_history', {
+            fileName: 'play_history_latest.json',
+            overwrite: true
+        });
     } catch (e) {
-        console.warn('Auto backup failed', e);
+        console.warn('Backup play history failed', e);
+        return false;
     }
-}
+};
+
+export const getTotalListenSeconds = () => ensureTotalListenSeconds(0);
 
 export const clearDatabase = async () => {
+    try {
+        await createFullBackup({ fileName: 'backup_latest.json', overwrite: true, silent: true });
+    } catch (e) {
+        console.warn('Auto backup before clear failed', e);
+    }
     const db = await openDB();
     const tx = db.transaction([STORE_PLAYLISTS, STORE_PLAY_HISTORY], 'readwrite');
     tx.objectStore(STORE_PLAYLISTS).clear();
     tx.objectStore(STORE_PLAY_HISTORY).clear();
+    writeTotalListenSeconds(0);
 };
 
 export const addListenRecord = async (
@@ -297,12 +517,119 @@ export const addListenRecord = async (
     await dbAppendPlayHistory(song, playedSeconds, ts, recordId);
 };
 
-export const getListenRecords = async (): Promise<ListenRecord[]> => {
+export const getListenRecords = async (options?: { includeCleared?: boolean }): Promise<ListenRecord[]> => {
+    const clearBefore = options?.includeCleared ? 0 : readClearBeforeTs();
     const list = await dbGetAllPlayHistory();
-    return list
+    const normalized = list
         .map((item) => ({
             ...item,
             playedSeconds: Math.max(0, Math.floor(Number(item.playedSeconds) || 0))
         }))
         .sort((a, b) => b.ts - a.ts);
+
+    const sumSeconds = normalized.reduce((acc, cur) => acc + (cur.playedSeconds || 0), 0);
+    ensureTotalListenSeconds(sumSeconds);
+
+    if (!clearBefore) return normalized;
+    return normalized.filter((item) => item.ts > clearBefore);
+};
+
+// ---------------- 自动备份与调度逻辑 ----------------
+
+/**
+ * 清理旧的自动备份，只保留最近的 N 个
+ */
+const rotateAutoBackups = () => {
+    try {
+        const allBackups = getBackupList(); // 默认按时间倒序排列
+        const autoBackups = allBackups.filter(name => name.startsWith(AUTO_BACKUP_PREFIX));
+
+        if (autoBackups.length > MAX_AUTO_BACKUPS) {
+            const toDelete = autoBackups.slice(MAX_AUTO_BACKUPS);
+            toDelete.forEach(filename => {
+                const fullPath = `${PATHS.BACKUP}/${filename}`;
+                deleteFileSafely(fullPath);
+                console.log(`[AutoBackup] Rotated/Deleted old backup: ${filename}`);
+            });
+        }
+    } catch (e) {
+        console.warn('[AutoBackup] Rotation failed', e);
+    }
+};
+
+/**
+ * 执行一次自动全量备份
+ */
+export const performAutoBackup = async () => {
+    try {
+        console.log('[AutoBackup] Starting...');
+        const data = await exportFullData();
+        // saveBackupToFile 默认添加时间戳后缀，如 auto_backup_20251223_100000.json
+        const success = saveBackupToFile(data, AUTO_BACKUP_PREFIX, { 
+            silent: true 
+        });
+
+        if (success) {
+            rotateAutoBackups();
+        }
+    } catch (e) {
+        console.error('[AutoBackup] Failed', e);
+    }
+};
+
+/**
+ * 归档详细听歌记录 (用于年度报告)
+ */
+export const archivePlayHistory = async () => {
+    try {
+        const history = await dbGetAllPlayHistory();
+        if (!history.length) return;
+
+        const totalSeconds = history.reduce((acc, cur) => acc + (cur.playedSeconds || 0), 0);
+        const songCount = new Set(history.map(h => h.songId)).size;
+
+        const payload = {
+            meta: {
+                version: '2.0', // 标记为详细归档版本
+                type: 'annual_report_source',
+                timestamp: Date.now(),
+                recordCount: history.length,
+                totalPlaySeconds: totalSeconds,
+                uniqueSongs: songCount,
+                device: navigator.userAgent
+            },
+            data: history
+        };
+
+        // 保存为 history_archive_YYYYMMDD_HHMMSS.json
+        saveBackupToFile(JSON.stringify(payload, null, 2), HISTORY_ARCHIVE_PREFIX, {
+            silent: true
+        });
+        console.log('[HistoryArchive] Saved successfully');
+    } catch (e) {
+        console.error('[HistoryArchive] Failed', e);
+    }
+};
+
+/**
+ * 初始化备份调度器
+ * 建议在 App.tsx 的 useEffect 中调用
+ */
+let backupIntervalId: any = null;
+
+export const initBackupScheduler = () => {
+    if (backupIntervalId) return;
+
+    const ONE_HOUR_MS = 60 * 60 * 1000;
+    
+    console.log('[Scheduler] Backup service started');
+
+    backupIntervalId = setInterval(async () => {
+        // 执行自动全量备份 (含轮转)
+        await performAutoBackup();
+        
+        // 同时执行听歌记录归档 (每小时一份，可用于生成高精度报告)
+        await archivePlayHistory();
+        
+    }, ONE_HOUR_MS);
 };

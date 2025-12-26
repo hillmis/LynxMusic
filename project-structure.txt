@@ -1,19 +1,27 @@
 ├── .gitignore
+├── 404.html
 ├── App.tsx
 ├── components
 │   ├── AddToPlaylistModal.tsx
 │   ├── BottomNav.tsx
+│   ├── OverlayBall.tsx
 │   ├── PlayerBar.tsx
 │   ├── PlayerSwiper.tsx
+│   ├── PlaySettingsSheet.tsx
 │   ├── SongActionSheet.tsx
-│   └── SongItem.tsx
+│   ├── SongItem.tsx
+│   └── SplashScreen.tsx
 ├── constants.ts
-├── hillmusicV2.zip
+├── favicon.png
+├── favicon.svg
 ├── hooks
 │   ├── useAudioPlayer.ts
 │   └── useSongActions.ts
+├── icon.svg
+├── index.css
 ├── index.html
 ├── index.tsx
+├── logo.png
 ├── metadata.json
 ├── package-lock.json
 ├── package.json
@@ -21,6 +29,7 @@
 │   ├── ChartDetail.tsx
 │   ├── CheckIn.tsx
 │   ├── Discover.tsx
+│   ├── DownloadManager.tsx
 │   ├── Home.tsx
 │   ├── Local.tsx
 │   ├── Mine.tsx
@@ -31,12 +40,21 @@
 │   ├── SeeAllSongs.tsx
 │   ├── Settings.tsx
 │   └── StatisticDetail.tsx
+├── postcss.config.js
 ├── project-structure.txt
+├── SponsorUpdate5.4.js
+├── tailwind.config.js
 ├── tsconfig.json
 ├── types.ts
 ├── utils
 │   ├── api.ts
+│   ├── autoBackup.ts
 │   ├── db.ts
+│   ├── downloadManager.ts
 │   ├── fileSystem.ts
-│   └── playlistStore.ts
+│   ├── nativeBridge.ts
+│   ├── onlinePlaylistFavorites.ts
+│   ├── playlistStore.ts
+│   ├── rewards.ts
+│   └── time.ts
 ├── vite.config.ts

@@ -1,16 +1,56 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useRef, useState } from 'react';
 import { Song } from '../types';
 import { fetchSongDetail } from '../utils/api';
 import { addListenRecord } from '../utils/db';
+import { safeToast, getNative } from '../utils/fileSystem';
 
 type Mode = 'sequence' | 'shuffle' | 'repeat';
+
+const VIDEO_EXTS = ['.mp4', '.mkv', '.avi', '.3gp', '.webm', '.mov'];
+const isVideoSource = (song?: Song | null) => {
+    if (!song) return false;
+    const link = (song.mvUrl || song.url || song.path || '').toLowerCase();
+    return VIDEO_EXTS.some(ext => link.endsWith(ext));
+};
+
+// 统一兜底：从 path 或 file://url 中构造可播放的本地地址
+const toSafeFileUrl = (raw?: string) => {
+    if (!raw) return '';
+    const clean = raw.startsWith('file://') ? raw.replace(/^file:\/\//, '') : raw;
+    return `file://${encodeURI(clean)}`;
+};
+
+const getExt = (val?: string) => {
+    if (!val) return '';
+    const clean = val.split('?')[0].split('#')[0];
+    const m = clean.match(/\.([a-z0-9]+)$/i);
+    return m ? m[1].toLowerCase() : '';
+};
+
+const normalizeSongForPlayback = (song: Song): Song => {
+    const localUrl = song.path
+        ? toSafeFileUrl(song.path)
+        : (song.url?.startsWith('file://') ? toSafeFileUrl(song.url) : '');
+    const preferLocal = !!localUrl && (song.source === 'local' || song.source === 'download' || !song.url);
+    const resolvedUrl = preferLocal ? localUrl : (song.url || localUrl);
+
+    return {
+        ...song,
+        url: resolvedUrl,
+        isDetailsLoaded: song.isDetailsLoaded || preferLocal,
+    };
+};
 
 export const useAudioPlayer = () => {
     // 所有 hooks 必须在顶层无条件调用
     const audioRef = useRef<HTMLAudioElement | null>(null);
+    const nativeRef = useRef(getNative());
+    const localUrlCache = useRef<Record<string, string>>({});
 
     const [playlist, setPlaylist] = useState<Song[]>([]);
+    const playlistRef = useRef<Song[]>([]);
     const [currentIndex, setCurrentIndex] = useState<number>(-1);
+    const currentIndexRef = useRef<number>(-1);
     const [currentSong, setCurrentSong] = useState<Song | null>(null);
 
     const [isPlaying, setIsPlaying] = useState(false);
@@ -29,10 +69,18 @@ export const useAudioPlayer = () => {
     }, [currentSong]);
 
     useEffect(() => {
+        playlistRef.current = playlist;
+    }, [playlist]);
+
+    useEffect(() => {
+        currentIndexRef.current = currentIndex;
+    }, [currentIndex]);
+
+    useEffect(() => {
         isPlayingRef.current = isPlaying;
     }, [isPlaying]);
 
-    // 统计：当前歌曲播放会话
+    // 统计：当前歌曲播放会计数
     const statRef = useRef({
         songId: '' as string,
         startedAt: 0,
@@ -66,6 +114,56 @@ export const useAudioPlayer = () => {
         statRef.current.sessionId = `${now}_${song.id}`;
     };
 
+    const buildDataUrl = (raw: string) => raw.startsWith('data:') ? raw : `data:audio/mpeg;base64,${raw}`;
+
+    const loadLocalAudioUrl = async (song: Song): Promise<string | null> => {
+        const keyRaw = song.path || song.url || '';
+        if (!keyRaw) return null;
+        const key = keyRaw.startsWith('file://') ? decodeURI(keyRaw.replace(/^file:\/\//, '')) : keyRaw;
+        if (localUrlCache.current[key]) return localUrlCache.current[key];
+
+        try {
+            const native = nativeRef.current || getNative();
+            const raw = native?.file?.read?.(key) ?? native?.gainfile?.(key);
+            if (!raw) return null;
+            const dataUrl = buildDataUrl(raw);
+            localUrlCache.current[key] = dataUrl;
+            return dataUrl;
+        } catch (err) {
+            console.warn('读取本地文件失败', err);
+            return null;
+        }
+    };
+
+    const loadLocalVideoUrl = async (song: Song): Promise<string | null> => {
+        const keyRaw = song.path || song.mvUrl || song.url || '';
+        if (!keyRaw) return null;
+        const key = keyRaw.startsWith('file://') ? decodeURI(keyRaw.replace(/^file:\/\//, '')) : keyRaw;
+        if (localUrlCache.current[key]) return localUrlCache.current[key];
+
+        try {
+            const native = nativeRef.current || getNative();
+            const raw = native?.file?.read?.(key) ?? native?.gainfile?.(key);
+            if (!raw) return null;
+            const ext = getExt(key);
+            const mimeMap: Record<string, string> = {
+                mp4: 'video/mp4',
+                mkv: 'video/x-matroska',
+                avi: 'video/x-msvideo',
+                webm: 'video/webm',
+                mov: 'video/quicktime',
+                '3gp': 'video/3gpp',
+            };
+            const mime = mimeMap[ext] || 'video/mp4';
+            const dataUrl = raw.startsWith('data:') ? raw : `data:${mime};base64,${raw}`;
+            localUrlCache.current[key] = dataUrl;
+            return dataUrl;
+        } catch (err) {
+            console.warn('读取本地视频失败', err);
+            return null;
+        }
+    };
+
     // --- 核心播放逻辑 ---
     const executePlay = useCallback(async (song: Song) => {
         // 切歌前落库统计
@@ -75,15 +173,34 @@ export const useAudioPlayer = () => {
 
         setIsLoading(true);
 
-        let target: Song = { ...song };
+        let target: Song = normalizeSongForPlayback(song);
+        const isVideo = isVideoSource(target);
         try {
             // 如果详情未加载或没有播放链接，尝试获取
-            if (!target.url || !target.isDetailsLoaded) {
+            if (!isVideo && (!target.url || !target.isDetailsLoaded) && target.source !== 'local' && !target.path) {
                 target = await fetchSongDetail(target);
             }
 
-            if (!target.url) {
-                console.warn('无播放链接:', target.title);
+            if (isVideo && (target.source === 'local' || target.mvUrl?.startsWith('file://') || target.path)) {
+                const localVideoUrl = await loadLocalVideoUrl(target);
+                if (localVideoUrl) {
+                    target = { ...target, mvUrl: localVideoUrl, url: localVideoUrl, isDetailsLoaded: true };
+                } else if (target.path) {
+                    const fallbackUrl = toSafeFileUrl(target.path);
+                    target = { ...target, mvUrl: target.mvUrl || fallbackUrl, url: target.url || fallbackUrl };
+                }
+            }
+
+            // 本地播放：优先通过 webapp 读取文件内容生成 dataURL
+            if (!isVideo && (target.source === 'local' || target.url?.startsWith('file://') || target.path)) {
+                const localUrl = await loadLocalAudioUrl(target);
+                if (localUrl) {
+                    target = { ...target, url: localUrl, isDetailsLoaded: true };
+                }
+            }
+
+            if (!target.url && !isVideo) {
+                console.warn('无播放链接', target.title);
                 setIsLoading(false);
                 return;
             }
@@ -92,10 +209,18 @@ export const useAudioPlayer = () => {
             setIsPlaying(true);
             setIsLoading(false);
 
-            // 替换 playlist 内同 id 的对象
             setPlaylist(prev => prev.map(s => (s.id === target.id ? target : s)));
 
-            // 设置音频源并播放
+            // Keep playlist entry in sync
+            // Video source is handled by the in-player video element
+            if (isVideo) {
+                setProgress(0);
+                setDuration(target.duration || 0);
+                beginStat(target);
+                return;
+            }
+
+            // Set audio source and play
             const audio = audioRef.current!;
             if (audio.src !== target.url) {
                 audio.src = target.url;
@@ -105,7 +230,7 @@ export const useAudioPlayer = () => {
             const playPromise = audio.play();
             if (playPromise !== undefined) {
                 playPromise.catch(error => {
-                    console.error('自动播放被拦截或失败:', error);
+                    console.error('自动播放被阻拦或失败:', error);
                     setIsPlaying(false);
                 });
             }
@@ -217,7 +342,7 @@ export const useAudioPlayer = () => {
         };
     }, []);
 
-    // ✅ 动态绑定 ended 事件
+    // 动态绑定 ended 事件
     useEffect(() => {
         const audio = audioRef.current;
         if (!audio) return;
@@ -265,7 +390,7 @@ export const useAudioPlayer = () => {
             if (played >= 3) {
                 addListenRecord(currentSong, played, s.startedAt || Date.now(), s.sessionId || undefined);
             }
-        }, 15000); // 每 15 秒尝试一次
+        }, 15000); // 每15秒尝试一次
 
         return () => clearInterval(timer);
     }, [isPlaying, currentSong]);
@@ -299,21 +424,24 @@ export const useAudioPlayer = () => {
         setPlaylist(prev => {
             const idx = prev.findIndex(s => s.id === song.id);
             if (idx !== -1) {
+                const updated = prev.map((s, i) => i === idx ? normalizeSongForPlayback(s) : s);
                 setCurrentIndex(idx);
-                executePlay(prev[idx]);
-                return prev;
+                executePlay(updated[idx]);
+                return updated;
             }
 
             const next = [...prev];
             if (next.length === 0) {
-                next.push(song);
+                const normalized = normalizeSongForPlayback(song);
+                next.push(normalized);
                 setCurrentIndex(0);
-                executePlay(song);
+                executePlay(normalized);
             } else {
                 const insertAt = currentIndex + 1;
-                next.splice(insertAt, 0, song);
+                const normalized = normalizeSongForPlayback(song);
+                next.splice(insertAt, 0, normalized);
                 setCurrentIndex(insertAt);
-                executePlay(song);
+                executePlay(normalized);
             }
             return next;
         });
@@ -321,50 +449,86 @@ export const useAudioPlayer = () => {
 
     const playList = (songs: Song[], startIndex = 0) => {
         if (!songs || songs.length === 0) return;
-        setPlaylist(songs);
+        const normalized = songs.map(normalizeSongForPlayback);
+        setPlaylist(normalized);
         setCurrentIndex(startIndex);
-        executePlay(songs[startIndex]);
+        executePlay(normalized[startIndex]);
     };
 
     const addToQueue = (song: Song) => {
         setPlaylist(prev => {
             if (prev.some(s => s.id === song.id)) return prev;
-            return [...prev, song];
+            return [...prev, normalizeSongForPlayback(song)];
         });
-        window.webapp?.toast?.('已添加到队列');
+        safeToast('已添加到队列');
     };
 
     const addToNext = (song: Song) => {
         setPlaylist(prev => {
-            if (prev.some(s => s.id === song.id)) return prev;
+            if (prev.some(s => s.id === song.id)) {
+                safeToast('歌曲已在队列中');
+                return prev;
+            }
 
             if (prev.length === 0) {
-                return [song];
+                setCurrentIndex(0);
+                const normalized = normalizeSongForPlayback(song);
+                const nextList = [normalized];
+                executePlay(normalized);
+                return nextList;
             }
 
-            if (currentIndex < 0) {
-                return [...prev, song];
-            }
-
-            const insertAt = Math.min(currentIndex + 1, prev.length);
             const next = [...prev];
-            next.splice(insertAt, 0, song);
+            const safeIndex = currentIndexRef.current >= 0 ? currentIndexRef.current : -1;
+
+            if (safeIndex < 0) {
+                // 没有正在播放的歌曲时，直接在末尾播放
+                const normalized = normalizeSongForPlayback(song);
+                next.push(normalized);
+                setCurrentIndex(next.length - 1);
+                executePlay(normalized);
+                return next;
+            }
+
+            const insertAt = Math.min(safeIndex + 1, next.length);
+            next.splice(insertAt, 0, normalizeSongForPlayback(song));
+            // 保持当前播放不变，仅在队列中排到当前曲目的下一位
             return next;
         });
-        window.webapp?.toast?.('已设为下一首播放');
+        safeToast('已设为下一首播放');
     };
+
+    // 获取当前播放位置（索引、歌曲、队列快照）
+    const getCurrentPosition = () => ({
+        index: currentIndexRef.current,
+        song: currentSongRef.current,
+        playlist: [...playlistRef.current],
+    });
 
     const addAllToQueue = (songs: Song[]) => {
         setPlaylist(prev => {
             const map = new Map(prev.map(s => [s.id, s]));
-            songs.forEach(s => { if (!map.has(s.id)) map.set(s.id, s); });
+            songs.forEach(s => {
+                if (!map.has(s.id)) map.set(s.id, normalizeSongForPlayback(s));
+            });
             return Array.from(map.values());
         });
-        window.webapp?.toast?.('已添加到队列');
+        safeToast('已添加到队列');
     };
 
     const togglePlay = async () => {
         if (!currentSong) return;
+        const videoMode = isVideoSource(currentSong);
+        if (videoMode) {
+            // 视频播放交由视频元素控制，这里只同步状态和统计
+            if (isPlaying) {
+                await flushStat();
+            } else {
+                beginStat(currentSong);
+            }
+            setIsPlaying(!isPlaying);
+            return;
+        }
         if (isPlaying) {
             await flushStat();
             setIsPlaying(false);
@@ -422,5 +586,6 @@ export const useAudioPlayer = () => {
         setProgress: setProgressHandler,
         updateSongInPlaylist,
         removeFromQueue,
+        getCurrentPosition,
     };
 };

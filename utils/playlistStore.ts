@@ -1,12 +1,45 @@
 //--- START OF FILE playlistStore.ts ---
 
 import { Playlist, Song } from '../types';
-import { dbSavePlaylist, dbDeletePlaylist, getItem } from './db';
+import { dbSavePlaylist, dbDeletePlaylist, getItem, dbGetPlaylists, openDB } from './db';
 
 export const FAVORITE_PLAYLIST_TITLE = '我喜欢';
+// 与“我的”页面一致的红心封面（圆形底+红心）
+export const FAVORITE_COVER_URL =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+     <rect x="0" y="0" width="120" height="120" fill="#dcababff"/>
+      <path d="M60 96 26 62c-9-9-9-25 2-34 8-7 21-6 30 3 9-9 22-10 30-3 11 9 11 25 2 34Z" fill="#ef4444"/>
+    </svg>`
+  );
 
 const STORE_PLAYLISTS = 'playlists';
 const STORAGE_KEY = 'hm_playlists_v1'; // LocalStorage fallback key
+const COLLECT_STAT_KEY = 'hm_collect_stat_v1';
+
+const todayKey = () => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+};
+
+const bumpCollectCounter = (delta = 1) => {
+    try {
+        const raw = localStorage.getItem(COLLECT_STAT_KEY);
+        const parsed = raw ? JSON.parse(raw) as { date: string; count: number } : null;
+        if (parsed && parsed.date === todayKey()) {
+            const next = { date: parsed.date, count: Math.max(0, (parsed.count || 0) + delta) };
+            localStorage.setItem(COLLECT_STAT_KEY, JSON.stringify(next));
+        } else {
+            localStorage.setItem(COLLECT_STAT_KEY, JSON.stringify({ date: todayKey(), count: Math.max(1, delta) }));
+        }
+    } catch {
+        // ignore counter failures
+    }
+};
 
 // 触发更新事件
 const notifyUpdate = () => {
@@ -15,7 +48,30 @@ const notifyUpdate = () => {
 
 // 获取所有歌单 (混合 DB 和 LocalStorage 逻辑，根据你原有实现调整)
 // 这里为了保持一致性，主要沿用 LocalStorage 逻辑，因为 dbSavePlaylist 似乎是 LocalStorage 封装
+const persistPlaylistsToDb = async (list: Playlist[]) => {
+    try {
+        const db = await openDB();
+        const tx = db.transaction(STORE_PLAYLISTS, 'readwrite');
+        tx.objectStore(STORE_PLAYLISTS).clear();
+        list.forEach(item => tx.objectStore(STORE_PLAYLISTS).put(item));
+    } catch {
+        // ignore cache errors
+    }
+};
+
 export const getUserPlaylists = async (): Promise<Playlist[]> => {
+    // 1) 尝试从 IndexedDB（缓存层）读取
+    try {
+        const dbList = await dbGetPlaylists();
+        if (dbList && dbList.length) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(dbList));
+            return dbList;
+        }
+    } catch {
+        // ignore
+    }
+
+    // 2) 回退 LocalStorage（重要数据本地持久）
     try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) {
@@ -43,6 +99,7 @@ export const getUserPlaylists = async (): Promise<Playlist[]> => {
 
 const savePlaylists = async (list: Playlist[]) => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+    await persistPlaylistsToDb(list);
     // 触发更新事件，通知 UI 刷新
     window.dispatchEvent(new Event('playlist-updated'));
 };
@@ -110,6 +167,7 @@ export const addSongToPlaylist = async (playlistId: string, song: Song): Promise
 
     pl.updatedAt = Date.now();
     await savePlaylists(list);
+    bumpCollectCounter(1);
     return true;
 };
 
@@ -189,6 +247,50 @@ export const saveImportedPlaylist = async (playlist: Playlist): Promise<boolean>
 
     await savePlaylists(list);
     return true;
+};
+
+// 将外部导入的“我喜欢”同步到系统“我喜欢”
+export const upsertFavoriteFromImport = async (playlist: Playlist, mode: 'merge' | 'override'): Promise<Playlist> => {
+    const list = await getUserPlaylists();
+    let fav = list.find(p => p.title === FAVORITE_PLAYLIST_TITLE);
+
+    if (!fav) {
+        fav = {
+            id: 'fav_001',
+            title: FAVORITE_PLAYLIST_TITLE,
+            creator: 'me',
+            coverUrl: '',
+            songCount: 0,
+            description: '我的红心歌曲',
+            songs: [],
+            isLocal: true,
+            source: 'local',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        };
+        list.unshift(fav);
+    }
+
+    const importedSongs = (playlist.songs || []).map(s => ({ ...s, addedAt: Date.now() }));
+
+    if (mode === 'override') {
+        fav.songs = importedSongs;
+    } else {
+        const existMap = new Map((fav.songs || []).map(s => [s.id, s]));
+        importedSongs.forEach(s => existMap.set(s.id, s));
+        fav.songs = Array.from(existMap.values());
+    }
+
+    fav.songCount = fav.songs?.length || 0;
+    const firstCover = fav.songs?.find(s => s.coverUrl)?.coverUrl;
+    if (firstCover) {
+        fav.coverUrl = firstCover;
+        fav.coverImgStack = [firstCover, firstCover, firstCover];
+    }
+    fav.updatedAt = Date.now();
+
+    await savePlaylists(list);
+    return fav;
 };
 
 // 判断歌曲是否已在“我喜欢”

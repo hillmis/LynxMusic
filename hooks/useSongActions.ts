@@ -1,8 +1,10 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Song } from '../types';
-import { getUserPlaylists, addSongToPlaylist, createUserPlaylist, FAVORITE_PLAYLIST_TITLE, isSongInFavorites, removeSongFromFavorites } from '../utils/playlistStore';
-import { saveDownloadedSong, blobToBase64 } from '../utils/fileSystem';
-import { dbSaveLocalSong } from '../utils/db';
+import { getUserPlaylists, addSongToPlaylist, createUserPlaylist, FAVORITE_PLAYLIST_TITLE, isSongInFavorites, removeSongFromFavorites, removeSongFromPlaylist } from '../utils/playlistStore';
+import { safeToast } from '../utils/fileSystem';
+import { createDownloadTask, startDownloadQueue } from '../utils/downloadManager';
+import { fetchSongDetail, fetchMusicVideo } from '../utils/api';
+import { DOWNLOAD_COST, consumeDownloadChance, getDownloadChances, getPointsBalance, hasDownloadPrivilege, redeemDownloadChance } from '../utils/rewards';
 
 type Deps = {
     addToQueue?: (song: Song) => void;
@@ -24,13 +26,7 @@ export const useSongActions = (deps: Deps = {}) => {
     const close = () => setShowSheet(false);
 
     // --- 辅助：安全的 Toast ---
-    const toast = (msg: string) => {
-        if (window.webapp?.toast) {
-            window.webapp.toast(msg);
-        } else {
-            console.log('[Toast]:', msg);
-        }
-    };
+    const toast = safeToast;
 
     const getExtensionFromPath = (value?: string | null): string | null => {
         if (!value) return null;
@@ -39,45 +35,43 @@ export const useSongActions = (deps: Deps = {}) => {
         return match ? `.${match[1].toLowerCase()}` : null;
     };
 
-    const getExtensionFromDisposition = (disposition: string | null): string | null => {
-        if (!disposition) return null;
-        const match = disposition.match(/filename\*?=(?:UTF-8''|")?([^;"\n]+)/i);
-        if (!match) return null;
-        const name = decodeURIComponent(match[1].replace(/"/g, ''));
-        return getExtensionFromPath(name);
-    };
+    const ensureDownloadOpportunity = (): boolean => {
+        if (hasDownloadPrivilege()) {
+            return true;
+        }
 
-    const getExtensionFromContentType = (contentType: string | null): string | null => {
-        if (!contentType) return null;
-        const type = contentType.split(';')[0].trim().toLowerCase();
-        const map: Record<string, string> = {
-            'audio/flac': '.flac',
-            'audio/x-flac': '.flac',
-            'audio/mpeg': '.mp3',
-            'audio/mp3': '.mp3',
-            'audio/mp4': '.m4a',
-            'audio/aac': '.aac',
-            'audio/ogg': '.ogg',
-            'audio/wav': '.wav',
-            'audio/x-wav': '.wav',
-            'audio/webm': '.webm',
-            'audio/x-ms-wma': '.wma',
-            'video/mp4': '.mp4',
-            'video/webm': '.webm',
-            'video/x-matroska': '.mkv',
+        const available = getDownloadChances();
+        if (available > 0) {
+            consumeDownloadChance();
+            toast?.(`已使用 1 次下载次数，剩余 ${Math.max(0, available - 1)} 次`);
+            return true;
+        }
+
+        const balance = getPointsBalance();
+        if (balance >= DOWNLOAD_COST) {
+            const confirmRedeem = window.confirm(`下载需要消耗 1 次下载次数，是否花费 ${DOWNLOAD_COST} 积分兑换？（当前积分 ${balance}）`);
+            if (confirmRedeem) {
+                const redeemed = redeemDownloadChance();
+                if (redeemed.ok) {
+                    consumeDownloadChance();
+                    toast?.(`已消耗 ${DOWNLOAD_COST} 积分兑换并使用 1 次下载次数`);
+                    return true;
+                }
+                toast?.('兑换失败，请稍后再试');
+            }
+            return false;
+        }
+
+        toast?.('下载次数不足，请前往福利中心完成任务获取积分后兑换下载次数');
+        const goCheckIn = () => {
+            try {
+                window.dispatchEvent(new CustomEvent('hm-open-checkin'));
+            } catch { }
         };
-        return map[type] || null;
-    };
-
-    const ensureExtension = (filename: string, ext: string | null, fallback: string) => {
-        const safeExt = ext || fallback;
-        if (!safeExt) return filename;
-        return filename.toLowerCase().endsWith(safeExt) ? filename : `${filename}${safeExt}`;
-    };
-
-    const toFileUrl = (path: string) => {
-        if (path.startsWith('file://')) return path;
-        return `file://${encodeURI(path)}`;
+        if (window.confirm('下载次数不足，是否前往福利中心获取下载次数？')) {
+            goCheckIn();
+        }
+        return false;
     };
 
     // --- 单曲操作 ---
@@ -124,11 +118,21 @@ export const useSongActions = (deps: Deps = {}) => {
 
     const handleAddToPlaylist = async (playlistId: string, song: Song) => {
         try {
+            const playlists = await getUserPlaylists();
+            const target = playlists.find(p => p.id === playlistId);
+            const exists = target?.songs?.some(s => s.id === song.id);
+
+            if (exists) {
+                const removed = await removeSongFromPlaylist(playlistId, song.id);
+                toast(removed ? '已移出歌单' : '移出失败');
+                return;
+            }
+
             const ok = await addSongToPlaylist(playlistId, song);
             toast(ok ? '已添加到歌单' : '歌曲已在歌单中');
         } catch (e) {
             console.error(e);
-            toast('添加失败');
+            toast('操作失败');
         }
     };
 
@@ -147,74 +151,50 @@ export const useSongActions = (deps: Deps = {}) => {
 
     // ✅ 修复：完整下载流程
     const handleDownload = async (song: Song, type: 'music' | 'video' = 'music') => {
-        // 1. 获取 URL
-        const targetUrl = type === 'music' ? song.url : song.mvUrl;
+        const allowed = ensureDownloadOpportunity();
+        if (!allowed) return false;
+
+        let targetSong = song;
+        // 自动补全播放链接
+        if ((type === 'music' && !song.url) || (type === 'video' && !song.mvUrl)) {
+            try {
+                const detail = await fetchSongDetail(song);
+                if (detail) targetSong = { ...song, ...detail };
+            } catch { }
+            if (type === 'video' && !targetSong.mvUrl) {
+                try {
+                    const mv = await fetchMusicVideo(song.title || '');
+                    if (mv) targetSong = { ...targetSong, mvUrl: mv };
+                } catch { }
+            }
+        }
+
+        const targetUrl = type === 'music' ? targetSong.url : targetSong.mvUrl;
         const fallbackExt = type === 'music' ? '.mp3' : '.mp4';
 
         if (!targetUrl) {
-            toast('暂无下载链接');
-            return;
+            toast('没有可下载的地址');
+            return false;
         }
 
-        toast('开始下载，请稍候...');
+        const baseName = `${targetSong.artist || '未知歌手'} - ${targetSong.title || '未知歌曲'}`.trim();
+        createDownloadTask({
+            type: type === 'video' ? 'mv' : 'song',
+            title: baseName,
+            artist: targetSong.artist,
+            coverUrl: targetSong.coverUrl,
+            songId: targetSong.id,
+            status: 'pending',
+            progress: 0,
+            url: targetUrl,
+            ext: getExtensionFromPath(targetUrl) || getExtensionFromPath(targetSong.path) || fallbackExt,
+            fileName: baseName,
+            pathHint: targetSong.path
+        });
 
-        try {
-            const baseName = `${song.artist || '未知歌手'} - ${song.title || '未知歌曲'}`.trim();
-
-            if (targetUrl.startsWith('file://')) {
-                const localPath = decodeURI(targetUrl.replace('file://', ''));
-                const ext = getExtensionFromPath(localPath) || getExtensionFromPath(song.path) || fallbackExt;
-                const filename = ensureExtension(baseName, ext, fallbackExt);
-                const fileData = window.webapp?.gainfile?.(localPath);
-                if (!fileData) {
-                    toast('读取本地文件失败');
-                    return;
-                }
-                saveDownloadedSong(filename, fileData);
-                return;
-            }
-
-            // 2. Fetch 数据
-            const res = await fetch(targetUrl);
-            if (!res.ok) {
-                toast(`下载失败 (${res.status})`);
-                return;
-            }
-            const blob = await res.blob();
-
-            // 3. 转纯 Base64
-            const base64 = await blobToBase64(blob);
-
-            // 4. 调用 webapp 接口保存
-            const extFromHeader = getExtensionFromDisposition(res.headers.get('content-disposition'));
-            const extFromUrl = getExtensionFromPath(targetUrl);
-            const extFromType = getExtensionFromContentType(res.headers.get('content-type') || blob.type || null);
-            const filename = ensureExtension(baseName, extFromHeader || extFromUrl || extFromType, fallbackExt);
-            const savedPath = saveDownloadedSong(filename, base64);
-
-            if (!savedPath) {
-                // saveDownloadedSong 内部会 toast 失败原因
-                return;
-            }
-
-            // 5. 保存到本地数据库 (Local Songs DB)
-            const localSong: Song = {
-                ...song,
-                id: `loc_${savedPath}`,
-                url: toFileUrl(savedPath),
-                path: savedPath,
-                source: 'download',
-                isDetailsLoaded: true,
-                quality: 'Local',
-                mvUrl: type === 'video' ? toFileUrl(savedPath) : song.mvUrl
-            };
-
-            await dbSaveLocalSong(localSong);
-            // toast('下载完成'); // saveDownloadedSong 已经提示过了
-        } catch (e) {
-            console.error('Download failed', e);
-            toast('下载出错 (网络或跨域问题)');
-        }
+        toast('已加入下载队列');
+        startDownloadQueue();
+        return true;
     };
 
     // --- 批量操作 ---
@@ -236,6 +216,17 @@ export const useSongActions = (deps: Deps = {}) => {
             const playlists = await getUserPlaylists();
             let fav = playlists.find(p => p.title === FAVORITE_PLAYLIST_TITLE);
             if (!fav) fav = await createUserPlaylist(FAVORITE_PLAYLIST_TITLE);
+
+            const allInFav = songs.every(s => fav?.songs?.some(item => item.id === s.id));
+
+            if (allInFav) {
+                let removed = 0;
+                for (const song of songs) {
+                    if (await removeSongFromFavorites(song.id)) removed++;
+                }
+                toast(`已移出 ${removed} 首歌曲`);
+                return;
+            }
 
             let count = 0;
             for (const song of songs) {
@@ -262,6 +253,23 @@ export const useSongActions = (deps: Deps = {}) => {
         }
     };
 
+    const handleBatchDownload = async (songs: Song[], type: 'music' | 'video' = 'music') => {
+        if (!songs.length) return;
+        toast(type === 'video' ? '开始批量下载 MV...' : '开始批量下载歌曲...');
+        let success = 0;
+        for (const s of songs) {
+            const ok = await handleDownload(s, type);
+            if (!ok) break;
+            success += 1;
+        }
+        if (success === 0) {
+            toast('下载次数不足，请先前往福利中心获取下载次数');
+        } else {
+            const tail = success < songs.length ? '，其余因次数不足未添加' : '';
+            toast(`已添加 ${success} 个下载任务${tail}`);
+        }
+    };
+
     return {
         showSheet,
         selectedSong,
@@ -279,6 +287,7 @@ export const useSongActions = (deps: Deps = {}) => {
 
         handleBatchAddToQueue,
         handleBatchAddToFavorites,
-        handleBatchAddToPlaylist
+        handleBatchAddToPlaylist,
+        handleBatchDownload
     };
 };

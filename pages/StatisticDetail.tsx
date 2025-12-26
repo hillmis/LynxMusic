@@ -5,7 +5,7 @@ import {
 import {
     ResponsiveContainer, BarChart, Bar, XAxis, Tooltip, Cell, LineChart, Line, Pie, AreaChart, Area
 } from 'recharts';
-import { getListenRecords } from '../utils/db';
+import { getListenRecords, getTotalListenSeconds } from '../utils/db';
 import { formatDuration } from '../utils/time';
 
 interface ChartDetailProps {
@@ -14,9 +14,24 @@ interface ChartDetailProps {
 
 const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
     const [records, setRecords] = useState<any[]>([]);
+    const [totalSecondsAll, setTotalSecondsAll] = useState(0);
+    const getDayKey = (ts: number) => {
+        const d = new Date(ts);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    const todayKey = useMemo(() => getDayKey(Date.now()), []);
+    const monthStartMs = useMemo(() => {
+        const d = new Date();
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() - 29);
+        return d.getTime();
+    }, []);
 
     useEffect(() => {
-        const load = () => getListenRecords().then(setRecords);
+        const load = () => getListenRecords({ includeCleared: true }).then((list) => {
+            setRecords(list);
+            setTotalSecondsAll(getTotalListenSeconds());
+        });
         load();
         window.addEventListener('listen-history-updated', load);
         return () => window.removeEventListener('listen-history-updated', load);
@@ -24,29 +39,62 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
 
     // --- 基础统计 ---
     const stats = useMemo(() => {
-        const totalSeconds = records.reduce((acc, cur) => acc + (cur.playedSeconds || 0), 0);
+        const totalSeconds = totalSecondsAll || records.reduce((acc, cur) => acc + (cur.playedSeconds || 0), 0);
+        let todaySeconds = 0;
+        let monthSeconds = 0;
+        let todayCount = 0;
+        let monthCount = 0;
 
-        // 统计最常听
-        const artistMap: Record<string, number> = {};
-        const songMap: Record<string, number> = {};
+        const artistDurationMap: Record<string, number> = {};
+        const songDurationMap: Record<string, number> = {};
+        const artistPlayTimes: Record<string, number> = {};
+        const songPlayTimes: Record<string, number> = {};
+        const artistSet = new Set<string>();
+        const songSet = new Set<string>();
 
         records.forEach(r => {
-            artistMap[r.artist] = (artistMap[r.artist] || 0) + r.playedSeconds;
-            songMap[r.title] = (songMap[r.title] || 0) + r.playedSeconds;
+            const sec = Math.max(0, r.playedSeconds || 0);
+            const ts = r.ts || 0;
+            const key = r.dayKey || getDayKey(ts);
+            const artist = r.artist || '未知';
+            const song = r.title || '未知';
+            if (key === todayKey) {
+                todaySeconds += sec;
+                todayCount += 1;
+            }
+            if (ts >= monthStartMs) {
+                monthSeconds += sec;
+                monthCount += 1;
+            }
+            artistSet.add(artist);
+            songSet.add(song);
+            artistDurationMap[artist] = (artistDurationMap[artist] || 0) + sec;
+            songDurationMap[song] = (songDurationMap[song] || 0) + sec;
+            artistPlayTimes[artist] = (artistPlayTimes[artist] || 0) + 1;
+            songPlayTimes[song] = (songPlayTimes[song] || 0) + 1;
         });
 
-        const topArtist = Object.entries(artistMap).sort((a, b) => b[1] - a[1])[0] || ['暂无', 0];
-        const topSong = Object.entries(songMap).sort((a, b) => b[1] - a[1])[0] || ['暂无', 0];
+        const pickTop = (map: Record<string, number>) => Object.entries(map).sort((a, b) => b[1] - a[1])[0] || ['暂无', 0];
+        const topArtist = pickTop(artistPlayTimes);
+        const topSong = pickTop(songPlayTimes);
 
         return {
-            totalTime: formatDuration(totalSeconds),
+            totalTime: formatDuration(totalSeconds, { keepSeconds: true }),
             totalCount: records.length,
-            topArtist: topArtist[0],
-            topSong: topSong[0]
+            monthTime: formatDuration(monthSeconds, { keepSeconds: true }),
+            monthCount,
+            todayTime: formatDuration(todaySeconds, { keepSeconds: true }),
+            todayCount,
+            topArtistName: topArtist[0],
+            topArtistPlayTimes: topArtist[1],
+            topSongName: topSong[0],
+            topSongPlayTimes: topSong[1],
+            songCount: songSet.size,
+            artistCount: artistSet.size
         };
-    }, [records]);
+    }, [records, totalSecondsAll, todayKey, monthStartMs]);
 
-    // --- 图表数据�?4小时分布 ---
+    // --- 图表数据24小时分布 ---
     const dayData = useMemo(() => {
         const arr = Array.from({ length: 24 }, (_, h) => ({ label: `${h}点`, value: 0 }));
         records.forEach(r => {
@@ -98,29 +146,48 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
             <div className="p-5 space-y-6">
 
                 {/* 概览卡片 */}
-                <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-neutral-600/20 border border-indigo-500/20 p-4 rounded-2xl flex flex-col justify-between h-32">
-                        <div className="w-8 h-8 rounded-full bg-neutral-500 flex items-center justify-center text-white mb-2">
-                            <Clock size={16} />
-                        </div>
+                <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-slate-800/40 border border-white/5 p-4 rounded-2xl flex flex-col justify-between">
+                        
                         <div>
-                            <p className="text-xs text-indigo-200/70">累计听歌</p>
-                            <p className="text-xl font-bold text-white mt-0.5">{stats.totalTime}</p>
+                            <p className="text-xs text-indigo-200/70">今日累计</p>
+                            <p className="text-m font-bold text-white mt-0.5">{stats.todayTime}</p>
+                            
                         </div>
                     </div>
-                    <div className="bg-neutral-600/20 border border-emerald-500/20 p-4 rounded-2xl flex flex-col justify-between h-32">
-                        <div className="w-8 h-8 rounded-full bg-neutral-500 flex items-center justify-center text-white mb-2">
-                            <Music size={16} />
-                        </div>
+                    <div className="bg-slate-800/40 border border-white/5 p-4 rounded-2xl flex flex-col justify-between">
+                       
                         <div>
-                            <p className="text-xs text-emerald-200/70">播放次数</p>
-                            <p className="text-xl font-bold text-white mt-0.5">{stats.totalCount} <span className="text-xs font-normal opacity-60">次</span></p>
+                            <p className="text-xs text-emerald-200/70">近30天</p>
+                            <p className="text-m font-bold text-white mt-0.5">{stats.monthTime}</p>
+                           
+                        </div>
+                    </div>
+                    <div className="bg-slate-800/40 border border-white/5 p-4 rounded-2xl flex flex-col justify-between">
+                       
+                        <div>
+                            <p className="text-xs text-indigo-200/70">总累计</p>
+                            <p className="text-m font-bold text-white mt-0.5">{stats.totalTime}</p>
+                        
                         </div>
                     </div>
                 </div>
 
+                {/* 播放与覆盖统计 */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  
+                    <div className="bg-neutral-900 border border-white/5 p-4 rounded-2xl h-24 flex flex-col justify-between">
+                        <div className="text-xs text-slate-500">播放歌曲数</div>
+                        <div className="text-xl font-bold text-white">{stats.songCount}</div>        
+                    </div>
+                    <div className="bg-neutral-900 border border-white/5 p-4 rounded-2xl h-24 flex flex-col justify-between">
+                        <div className="text-xs text-slate-500">播放歌手</div>
+                        <div className="text-xl font-bold text-white">{stats.artistCount}</div>
+                    </div>
+                </div>
+
                 {/* 最爱统�?*/}
-                <div className=" bg-neutral-900  rounded-3xl p-5 border border-white/5">
+                <div className=" bg-slate-800/40  rounded-3xl p-5 border border-white/5">
                     <h2 className="text-white font-bold text-sm mb-4 flex items-center gap-2">
                         <PieChart size={16} className="text-orange-400" /> 听歌偏好
                     </h2>
@@ -130,8 +197,8 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
                                 <Mic2 size={24} />
                             </div>
                             <div>
-                                <p className="text-xs text-slate-500">最爱歌手</p>
-                                <p className="text-white font-medium">{stats.topArtist}</p>
+                                <p className="text-xs text-slate-500">最爱歌手（{stats.topArtistPlayTimes} 次）</p>
+                                <p className="text-white font-medium">{stats.topArtistName}</p>
                             </div>
                         </div>
                         <div className="w-full h-[1px] bg-white/5" />
@@ -140,8 +207,8 @@ const StatisticDetail: React.FC<ChartDetailProps> = ({ onBack }) => {
                                 <Music size={24} />
                             </div>
                             <div>
-                                <p className="text-xs text-slate-500">单曲循环最多的歌曲</p>
-                                <p className="text-white font-medium">{stats.topSong}</p>
+                                <p className="text-xs text-slate-500">单曲循环最多的歌曲（{stats.topSongPlayTimes} 次）</p>
+                                <p className="text-white font-medium">{stats.topSongName}</p>
                             </div>
                         </div>
                     </div>

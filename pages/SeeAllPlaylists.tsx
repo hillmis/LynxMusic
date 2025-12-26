@@ -4,6 +4,7 @@ import { Playlist, Song } from '../types';
 import { DYNAMIC_PLAYLIST_CONFIG } from '../constants';
 import { searchMusic, fetchSongDetail, fetchQQPlaylist } from '../utils/api'; // ✅ 引入 fetchQQPlaylist
 import { useAudioPlayer } from '../hooks/useAudioPlayer';
+import { safeToast } from '../utils/fileSystem';
 
 /**
  * =========================
@@ -50,8 +51,8 @@ const writeFavSet = (set: Set<string>) => {
 
 // Toast
 const toast = (msg: string) => {
-    window.webapp?.toast?.(msg);
-    if (!window.webapp?.toast) console.log('[toast]', msg);
+    safeToast(msg);
+    if (!safeToast) console.log('[toast]', msg);
 };
 
 // 节流
@@ -85,7 +86,7 @@ const MosaicCover: React.FC<{
     const d = imgs[3] || imgs[0] || fallback;
 
     return (
-        <div className={`relative overflow-hidden rounded-xl bg-[#0f172a] ${className || ''}`}>
+        <div className={`relative overflow-hidden rounded-xl bg-[#121212] ${className || ''}`}>
             {/* 背景模糊 */}
             <div className="absolute inset-0">
                 <img
@@ -311,7 +312,7 @@ const SeeAllPlaylists: React.FC<SeeAllPlaylistsProps> = ({ onBack, onNavigatePla
         return cfgList.map((item) => ({
             id: `dp_all_${item.id}`,
             title: item.name,
-            creator: 'HillMusic',
+            creator: 'LynxMusic',
             coverUrl: '',
             songCount: 50,
             description: item.type === 'qq_id' ? '外部精选歌单 (QQ音乐)' : `精选全网${item.name}，实时更新`,
@@ -532,15 +533,15 @@ const SeeAllPlaylists: React.FC<SeeAllPlaylistsProps> = ({ onBack, onNavigatePla
 
 
     return (
-        <div className="h-full overflow-y-auto no-scrollbar  bg-slate-900  pb-10 animate-in slide-in-from-right duration-300 transition-colors" onScroll={onScrollCloseSwipe}>
-            <div className="sticky top-0 z-30  bg-slate-900 /92 backdrop-blur-md border-b border-white/5">
+        <div className="h-full overflow-y-auto no-scrollbar  bg-[#121212]  pb-10 animate-in slide-in-from-right duration-300 transition-colors" onScroll={onScrollCloseSwipe}>
+            <div className="sticky top-0 z-30  bg-[#121212] /92 backdrop-blur-md border-b border-white/5">
                 <div className="p-4 flex items-center gap-3">
                     <button onClick={onBack} className="p-2 hover:bg-white/10 rounded-full transition-colors"><ArrowLeft size={22} className="text-white" /></button>
                     <div className="flex-1"><h1 className="text-lg font-bold text-white leading-tight">歌单广场</h1></div>
                     {importing && <Loader2 size={20} className="text-indigo-500 animate-spin" />}
                 </div>
                 <div className="px-4 pb-3">
-                    <div className="flex items-center gap-2 bg-[#0f172a]/60 border border-white/5 rounded-2xl px-3 py-2">
+                    <div className="flex items-center gap-2 bg-[#121212]/60 border border-white/5 rounded-2xl px-3 py-2">
                         <Search size={16} className="text-slate-400" />
                         <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSearchOrImport()} placeholder="搜索歌单 / 输入QQ歌单ID导入" className="flex-1 bg-transparent outline-none text-sm text-slate-200 placeholder:text-slate-400" />
                         {/^\d{8,}$/.test(q) ? (
@@ -554,7 +555,7 @@ const SeeAllPlaylists: React.FC<SeeAllPlaylistsProps> = ({ onBack, onNavigatePla
                     {tags.map((tag) => {
                         const active = tag === activeTag;
                         return (
-                            <button key={tag} onClick={() => setActiveTag(tag)} className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-medium transition-colors ${active ? 'bg-indigo-600 text-white shadow' : ' bg-[#0f172a]/70 text-slate-400 hover:text-white'}`}>{tag}</button>
+                            <button key={tag} onClick={() => setActiveTag(tag)} className={`whitespace-nowrap px-4 py-1.5 rounded-full text-xs font-medium transition-colors ${active ? 'bg-indigo-600 text-white shadow' : ' bg-[#121212]/70 text-slate-400 hover:text-white'}`}>{tag}</button>
                         );
                     })}
                 </div>
@@ -591,7 +592,7 @@ const SeeAllPlaylists: React.FC<SeeAllPlaylistsProps> = ({ onBack, onNavigatePla
 
                         const rightActions = (
                             <div className="flex items-center gap-2">
-                                <button onClick={(e) => { e.stopPropagation(); toggleFav(playlist); setOpenSwipeKey(null); }} className={`w-16 h-12 rounded-xl flex flex-col items-center justify-center text-xs font-bold border border-white/10 ${isFav ? 'bg-red-500/80 text-white' : 'bg-[#0f172a]/90 text-slate-200 hover:bg-[#0f172a]'}`}>
+                                <button onClick={(e) => { e.stopPropagation(); toggleFav(playlist); setOpenSwipeKey(null); }} className={`w-16 h-12 rounded-xl flex flex-col items-center justify-center text-xs font-bold border border-white/10 ${isFav ? 'bg-red-500/80 text-white' : 'bg-[#121212]/90 text-slate-200 hover:bg-[#121212]'}`}>
                                     <Heart size={16} className={isFav ? 'fill-current' : ''} /><span className="text-[10px] mt-0.5">{isFav ? '取消' : '收藏'}</span>
                                 </button>
                                 <button onClick={(e) => { e.stopPropagation(); addPlaylistToQueue(playlist); setOpenSwipeKey(null); }} className="w-16 h-12 rounded-xl bg-indigo-600 text-white flex flex-col items-center justify-center text-xs font-bold border border-white/10 hover:bg-indigo-500">

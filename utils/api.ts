@@ -3,13 +3,11 @@
 // --- 配置与常量 ---
 const DEFAULT_API_HOST = 'https://sdkapi.hhlqilongzhu.cn/api';
 const DEFAULT_API_KEY = 'Dragon652C2277C78812D1B1ED2C5D087D9053';
-const MY_PROXY_URL = 'https://hillmusic.liumao1118.workers.dev';
 const PROXY_POOL = [
     (url: string) => `https://bird.ioliu.cn/v1/?url=${encodeURIComponent(url)}`,               // 国内可直连
     (url: string) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,    // 稳定免费
     (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,          // 轻量备用
-    (url: string) => `https://v1.cors.workers.dev/?u=${encodeURIComponent(url)}`,              // Cloudflare 辅助
-    (url: string) => `${MY_PROXY_URL}?url=${encodeURIComponent(url)}`                          // 你的代理放最后
+    (url: string) => `https://v1.cors.workers.dev/?u=${encodeURIComponent(url)}`,              // Cloudflare 辅助                       // 你的代理放最后
 ];
 
 // 性能调优参数
@@ -161,7 +159,7 @@ export const searchMusic = async (keyword: string): Promise<Song[]> => {
     try {
         const data = await fastFetch(url);
         const list = Array.isArray(data.data) ? data.data : [];
-        
+
         return list.map((item: any, index: number) => {
             const title = item.song_name || item.song_title || '未知歌曲';
             const artist = item.song_singer || '未知歌手';
@@ -173,7 +171,7 @@ export const searchMusic = async (keyword: string): Promise<Song[]> => {
                 coverUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&q=80',
                 duration: 0,
                 url: '',
-                quality: item.quality || 'SQ',
+                quality: item.quality || 'SQ无损',
                 apiKeyword: `${title} ${artist}`,
                 originalIndex: index + 1,
                 isDetailsLoaded: false
@@ -183,7 +181,7 @@ export const searchMusic = async (keyword: string): Promise<Song[]> => {
 };
 
 /**
- * 获取歌曲详情（播放链接和歌词）
+ * 获取歌曲详情（播放链接、歌词和专辑图）
  */
 export const fetchSongDetail = async (song: Song): Promise<Song> => {
     if (song.isDetailsLoaded && song.url) return song;
@@ -238,7 +236,7 @@ export const getTopCharts = async (chartId: string): Promise<Song[]> => {
     try {
         const data = await fastFetch(url);
         const list = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []);
-        
+
         const songs: Song[] = list.map((item: any, index: number) => ({
             id: `chart_${chartId}_${index}_${item.song_mid || ''}`,
             title: item.title || item.song_name || '未知歌曲',
@@ -408,9 +406,30 @@ export const fetchKugouPlaylist = async (input: string): Promise<Playlist | null
         const data = json?.body?.data;
         if (!data?.info) return null;
 
+        const stripSingerPrefix = (name: string, singer?: string) => {
+            if (!name) return name;
+            const normName = name.trim();
+            const normSinger = (singer || '').trim();
+            const prefixes = [
+                `${normSinger} - `,
+                `${normSinger}-`,
+            ].filter(p => p.trim().length > 0);
+            for (const p of prefixes) {
+                if (normName.toLowerCase().startsWith(p.toLowerCase())) {
+                    return normName.slice(p.length).trim();
+                }
+            }
+            // 常见格式：Singer - Song
+            const parts = normName.split(' - ');
+            if (parts.length >= 2) {
+                return parts.slice(1).join(' - ').trim();
+            }
+            return normName;
+        };
+
         const songs: Song[] = data.info.map((item: any) => ({
             id: `kg_${item.hash || item.audio_id}`,
-            title: item.name,
+            title: stripSingerPrefix(item.name, Array.isArray(item.singerinfo) ? item.singerinfo[0]?.name : item.singername),
             artist: Array.isArray(item.singerinfo) ? item.singerinfo[0]?.name : item.singername,
             album: item.albuminfo?.name || '',
             coverUrl: ensureHttps((item.cover || '').replace('{size}', '400')),

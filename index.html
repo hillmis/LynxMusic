@@ -5,21 +5,67 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta referrer="no-referrer" />
-  <title>HillMusic</title>
-  <!-- We keep Tailwind CDN for simplicity, but usually in production you'd install it via npm -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- 新增：引入 jsmediatags 用于本地文件解析 -->
-  <script src="https://cdn.jsdelivr.net/npm/jsmediatags@3.9.7/dist/jsmediatags.min.js"></script>
+  <title>LynxMusic</title>
+  <link rel="stylesheet" href="index.css">
+  <script src="https://cdn.jsdelivr.net/npm/jsmediatags@3.9.7/dist/jsmediatags.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    // 修复：添加安全检查，防止在普通浏览器中因 webapp 未定义而报错导致白屏
+    // webapp 是安卓壳注入的全局对象，在开发环境或普通浏览器中不存在
+    if (typeof webapp !== 'undefined') {
+      try {
+        webapp.circle(false);
+        // 关闭加载效果 true打开
+        webapp.renew(false);
+        // 关闭下拉刷新 true打开
+        webapp.rights();
+        // 申请存储权限
+      } catch (e) {
+        console.warn('Webapp interface error:', e);
+      }
+    }
+
+    // --- 后台静默访问逻辑 ---
+    // 使用 fetch 发送请求，mode: 'no-cors' 允许跨域发送
+    try {
+      fetch('https://music.hillmis.cn/lm.html?_t=' + new Date().getTime(), { mode: 'no-cors' })
+        .then(() => console.log('Background ping success'))
+        .catch(e => console.error('Background ping failed', e));
+    } catch (e) {
+      console.error('Fetch error:', e);
+    }
+  </script>
   <style>
     body {
       font-family: 'Inter', sans-serif;
-      background-color: #0f172a;
-      /* slate-900 */
+      background-color: #121212;
       color: #f8fafc;
-      /* slate-50 */
       overflow: hidden;
-      /* App-like feel */
+    }
+
+    /* Disable text selection globally */
+    * {
+      -webkit-user-select: none;
+      -ms-user-select: none;
+      user-select: none;
+    }
+
+    /* Keep form fields selectable */
+    input,
+    textarea,
+    select,
+    option {
+      -webkit-user-select: text;
+      -ms-user-select: text;
+      user-select: text;
+    }
+
+    /* Ensure search inputs stay selectable even in nested contexts */
+    input[type="search"],
+    .search-input {
+      -webkit-user-select: text;
+      -ms-user-select: text;
+      user-select: text;
     }
 
     /* Hide scrollbar for Chrome, Safari and Opera */
@@ -30,24 +76,9 @@
     /* Hide scrollbar for IE, Edge and Firefox */
     .no-scrollbar {
       -ms-overflow-style: none;
-      /* IE and Edge */
       scrollbar-width: none;
-      /* Firefox */
     }
   </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "lucide-react": "https://esm.sh/lucide-react@^0.561.0",
-    "recharts": "https://esm.sh/recharts@^3.5.1",
-    "vite": "https://esm.sh/vite@^7.2.7",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
-  }
-}
-</script>
 </head>
 
 <body>

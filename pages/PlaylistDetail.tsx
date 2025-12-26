@@ -2,16 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft, Play, Share2, Loader2, PlusCircle, CheckCircle2,
     MoreVertical, Trash2, Edit3, ArrowUp, ArrowDown, CheckSquare,
-    Square, X, ListPlus, Heart, ListMusic, Plus
+    Square, X, ListPlus, Heart, ListMusic, Plus, Download, Search
 } from 'lucide-react';
 import { Playlist, Song } from '../types';
 import { SongItem } from '../components/SongItem';
 import { getDynamicPlaylist, fetchSongDetail } from '../utils/api';
-import { getPlaylistById, reorderPlaylistSongs, batchRemoveSongsFromPlaylist, updatePlaylistInfo, getUserPlaylists, addSongToPlaylist, removePlaylist } from '../utils/playlistStore';
+import { getPlaylistById, reorderPlaylistSongs, batchRemoveSongsFromPlaylist, updatePlaylistInfo, getUserPlaylists, addSongToPlaylist, removePlaylist, FAVORITE_PLAYLIST_TITLE, FAVORITE_COVER_URL } from '../utils/playlistStore';
 import { useSongActions } from '../hooks/useSongActions';
 import { getOnlinePlaylistConfigIdFromPlaylist, readOnlinePlaylistFavorites, writeOnlinePlaylistFavorites, ONLINE_PLAYLIST_FAVORITES_EVENT } from '../utils/onlinePlaylistFavorites';
 import AddToPlaylistModal from '../components/AddToPlaylistModal'; // ✅ 引入新组件
-
+import { safeToast } from '../utils/fileSystem';
 interface PlaylistDetailProps {
     playlist: Playlist;
     onBack: () => void;
@@ -44,6 +44,9 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
     const [showMoreMenu, setShowMoreMenu] = useState(false); // 右上角菜单
     const [showAddMenu, setShowAddMenu] = useState(false);   // 点击加号后的菜单
     const [showEditModal, setShowEditModal] = useState(false);
+    const [showSearch, setShowSearch] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
+    const searchInputRef = useRef<HTMLInputElement>(null);
 
     // ✅ 新增：添加到歌单弹窗状态
     const [showAddToPlaylist, setShowAddToPlaylist] = useState(false);
@@ -52,6 +55,7 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
     // 批量模式状态
     const [bulkMode, setBulkMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [favoriteSongIds, setFavoriteSongIds] = useState<Set<string>>(new Set());
 
     // 编辑状态
     const [editTitle, setEditTitle] = useState('');
@@ -69,10 +73,42 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
 
     // 计算显示封面
     const displayCover = useMemo(() => {
+        // 默认“我喜欢”封面为红心图
+        if (isFavoritePlaylist) {
+            return playlistData.coverUrl || FAVORITE_COVER_URL;
+        }
         if (playlistData.coverUrl && !playlistData.coverUrl.includes('unsplash')) return playlistData.coverUrl;
         if (songs.length > 0 && songs[0].coverUrl) return songs[0].coverUrl;
         return playlistData.coverUrl; // fallback
-    }, [playlistData.coverUrl, songs]);
+    }, [playlistData.coverUrl, songs, isFavoritePlaylist]);
+
+    const visibleSongs = useMemo(() => {
+        const keyword = searchTerm.trim().toLowerCase();
+        if (!keyword) return songs;
+        return songs.filter((s) => {
+            const title = s.title?.toLowerCase() || '';
+            const artist = s.artist?.toLowerCase() || '';
+            const album = s.album?.toLowerCase() || '';
+            return title.includes(keyword) || artist.includes(keyword) || album.includes(keyword);
+        });
+    }, [songs, searchTerm]);
+
+    useEffect(() => {
+        if (showSearch) {
+            setTimeout(() => searchInputRef.current?.focus(), 30);
+        }
+    }, [showSearch]);
+
+    useEffect(() => {
+        setSelectedIds((prev) => {
+            if (prev.size === 0) return prev;
+            const next = new Set<string>();
+            visibleSongs.forEach((s) => {
+                if (prev.has(s.id)) next.add(s.id);
+            });
+            return next.size === prev.size ? prev : next;
+        });
+    }, [visibleSongs]);
 
     // --- 数据加载 ---
     const loadFromDB = async () => {
@@ -163,17 +199,18 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
 
     // --- 播放逻辑 ---
     const handlePlayAll = () => {
-        if (songs.length > 0) {
-            onPlayList(songs);
-            window.webapp?.toast?.(`开始播放 ${songs.length} 首歌曲`);
+        if (visibleSongs.length > 0) {
+            onPlayList(visibleSongs);
+            safeToast(`开始播放 ${visibleSongs.length} 首歌曲`);
         }
     };
 
     // --- 批量/添加逻辑 ---
 
     const handleSelectAll = () => {
-        if (selectedIds.size === songs.length) setSelectedIds(new Set());
-        else setSelectedIds(new Set(songs.map(s => s.id)));
+        if (visibleSongs.length === 0) return;
+        if (selectedIds.size === visibleSongs.length) setSelectedIds(new Set());
+        else setSelectedIds(new Set(visibleSongs.map(s => s.id)));
     };
 
     const toggleSelect = (id: string) => {
@@ -184,6 +221,21 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
     };
 
     const getSelectedSongs = () => songs.filter(s => selectedIds.has(s.id));
+    const areSongsAllFavorite = (list: Song[]) => list.length > 0 && list.every(s => favoriteSongIds.has(s.id));
+
+    // 读取“我喜欢”歌曲集合
+    const refreshFavoriteIds = async () => {
+        const playlists = await getUserPlaylists();
+        const fav = playlists.find(p => p.title === FAVORITE_PLAYLIST_TITLE);
+        setFavoriteSongIds(new Set(fav?.songs?.map(s => s.id)));
+    };
+
+    useEffect(() => {
+        refreshFavoriteIds();
+        const handler = () => refreshFavoriteIds();
+        window.addEventListener('playlist-updated', handler);
+        return () => window.removeEventListener('playlist-updated', handler);
+    }, []);
 
     // 批量删除 (仅本地)
     const handleBatchDelete = async () => {
@@ -194,7 +246,7 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
         await batchRemoveSongsFromPlaylist(playlist.id, ids);
         setBulkMode(false);
         setSelectedIds(new Set());
-        window.webapp?.toast?.('已删除');
+        safeToast(`已删除 ${ids.length} 首歌曲`);
     };
 
     // 歌单菜单操作
@@ -212,13 +264,13 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
             description: editDesc,
             coverUrl: editCover
         });
-        window.webapp?.toast?.('歌单信息已更新');
+        safeToast('歌单信息已更新');
         setShowEditModal(false);
     };
 
     const delPlaylist = async (pl: Playlist) => {
         if (isFavoritePlaylist) {
-            window.webapp?.toast?.('"我喜欢"不能删除');
+            safeToast('"我喜欢"不能删除');
             return;
         }
         if (!confirm(`确定删除「${pl.title}」？`)) return;
@@ -231,17 +283,17 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
         const next = readOnlinePlaylistFavorites();
         if (next.has(onlineConfigId)) {
             next.delete(onlineConfigId);
-            window.webapp?.toast?.('已取消收藏');
+            safeToast('已取消收藏');
         } else {
             next.add(onlineConfigId);
-            window.webapp?.toast?.('已收藏歌单');
+            safeToast('已收藏歌单');
         }
         writeOnlinePlaylistFavorites(next);
         setIsOnlineFavorite(next.has(onlineConfigId));
     };
 
     return (
-        <div className="h-full overflow-y-auto no-scrollbar  bg-[#0f172a] pb-20 animate-in slide-in-from-bottom-10 duration-300 relative">
+        <div className="h-full overflow-y-auto no-scrollbar  bg-[#121212] pb-20 animate-in slide-in-from-bottom-10 duration-300 relative">
 
             {/* 顶部背景 */}
             <div className="relative h-72 w-full overflow-hidden">
@@ -250,7 +302,7 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                     className="absolute inset-0 w-full h-full object-cover blur-2xl opacity-50 scale-125"
                     alt="bg"
                 />
-                <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-slate-900/40 to-slate-900" />
+                <div className="absolute inset-0 bg-gradient-to-b from-black/30 via-[#121212]/40 to-[#121212]" />
 
                 {/* 导航栏 */}
                 <div className="absolute top-0 left-0 right-0 p-4 pt-6 flex items-center justify-between z-20">
@@ -258,6 +310,12 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                         <ArrowLeft size={24} className="text-white" />
                     </button>
                     <div className="flex gap-2 relative">
+                        <button
+                            onClick={() => { setShowSearch(!showSearch); setShowMoreMenu(false); }}
+                            className={`p-2 rounded-full backdrop-blur-md transition-colors ${showSearch ? 'bg-white text-slate-900' : 'hover:bg-white/10 text-white'}`}
+                        >
+                            <Search size={22} />
+                        </button>
                         {/* 更多菜单按钮 */}
                         <button
                             onClick={() => setShowMoreMenu(!showMoreMenu)}
@@ -270,10 +328,10 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                         {showMoreMenu && (
                             <>
                                 <div className="fixed inset-0 z-10" onClick={() => setShowMoreMenu(false)} />
-                                <div className="absolute right-0 top-12 w-40 bg-[#0f172a] rounded-xl shadow-2xl border border-white/10 z-20 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                                <div className="absolute right-0 top-12 w-40 bg-[#121212] rounded-xl shadow-2xl border border-white/10 z-20 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
 
                                     {!isLocalPlaylist && (
-                                        <button onClick={() => { window.webapp?.toast?.('分享功能开发中'); setShowMoreMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-white/5 text-sm text-white flex items-center gap-2">
+                                        <button onClick={() => { safeToast.toast?.('分享功能开发中'); setShowMoreMenu(false); }} className="w-full text-left px-4 py-3 hover:bg-white/5 text-sm text-white flex items-center gap-2">
                                             <Share2 size={16} /> 分享歌单
                                         </button>
                                     )}
@@ -313,6 +371,32 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                 </div>
 
                 {/* 歌单信息区 */}
+                {showSearch && (
+                    <div className="absolute left-4 right-4 top-16 z-30">
+                        <div className="flex items-center gap-2 bg-black/60 border border-white/10 rounded-full px-3 py-2 backdrop-blur-md shadow-lg">
+                            <Search size={16} className="text-slate-300" />
+                            <input
+                                ref={searchInputRef}
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                placeholder="搜索歌单内歌曲"
+                                className="flex-1 bg-transparent text-sm text-white placeholder:text-slate-500 outline-none border-none"
+                            />
+                            {searchTerm && (
+                                <button onClick={() => setSearchTerm('')} className="p-1 text-slate-400 hover:text-white">
+                                    <X size={14} />
+                                </button>
+                            )}
+                            <button
+                                onClick={() => { setShowSearch(false); setSearchTerm(''); }}
+                                className="p-1 text-slate-400 hover:text-white"
+                            >
+                                <X size={14} />
+                            </button>
+                        </div>
+                    </div>
+                )}
+
                 <div className="absolute bottom-6 left-6 right-6 z-10 flex gap-5 items-end">
                     <div className="w-32 h-32 rounded-xl shadow-2xl overflow-hidden border border-white/10 relative group">
                         <img src={displayCover} className="w-full h-full object-cover" alt="cover" />
@@ -339,20 +423,20 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                     {/* 播放全部按钮 */}
                     <button
                         onClick={handlePlayAll}
-                        disabled={songs.length === 0}
+                        disabled={visibleSongs.length === 0}
                         className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 text-white py-3 rounded-full shadow-lg shadow-indigo-900/30 hover:bg-indigo-500 active:scale-95 disabled:opacity-50 transition-all"
                     >
                         {loading ? <Loader2 size={20} className="animate-spin" /> : <Play size={20} fill="currentColor" />}
                         <span className="font-bold text-sm">播放全部</span>
-                        <span className="text-xs opacity-70 font-medium">({songs.length})</span>
+                        <span className="text-xs opacity-70 font-medium">({searchTerm.trim() ? `${visibleSongs.length}/${songs.length}` : visibleSongs.length})</span>
                     </button>
 
                     {/* 添加到...按钮 */}
                     <div className="relative">
                         <button
                             onClick={() => setShowAddMenu(!showAddMenu)}
-                            disabled={songs.length === 0}
-                            className={`p-3 rounded-full border border-white/10 shadow-lg transition-colors ${showAddMenu ? 'bg-white text-slate-900' : 'bg-[#0f172a] text-slate-200 hover:bg-slate-700'
+                            disabled={visibleSongs.length === 0}
+                            className={`p-3 rounded-full border border-white/10 shadow-lg transition-colors ${showAddMenu ? 'bg-white text-slate-900' : 'bg-[#121212] text-slate-200 hover:bg-slate-700'
                                 }`}
                         >
                             <PlusCircle size={20} />
@@ -362,9 +446,9 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                         {showAddMenu && (
                             <>
                                 <div className="fixed inset-0 z-20" onClick={() => setShowAddMenu(false)} />
-                                <div className="absolute top-12 right-0 w-48 bg-[#0f172a] rounded-xl shadow-xl border border-white/10 z-30 overflow-hidden animate-in fade-in zoom-in-95">
+                                <div className="absolute top-12 right-0 w-48 bg-[#121212] rounded-xl shadow-xl border border-white/10 z-30 overflow-hidden animate-in fade-in zoom-in-95">
                                     <button
-                                        onClick={() => { songActions.handleBatchAddToQueue(songs); setShowAddMenu(false); }}
+                                        onClick={() => { songActions.handleBatchAddToQueue(visibleSongs); setShowAddMenu(false); }}
                                         className="w-full text-left px-4 py-3 hover:bg-white/5 text-sm text-white flex items-center gap-2"
                                     >
                                         <ListPlus size={16} /> 加入播放队列
@@ -372,10 +456,10 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                                     {!isFavoritePlaylist && (
                                         <>
                                             <button
-                                                onClick={() => { songActions.handleBatchAddToFavorites(songs); setShowAddMenu(false); }}
+                                                onClick={() => { songActions.handleBatchAddToFavorites(visibleSongs); setShowAddMenu(false); }}
                                                 className="w-full text-left px-4 py-3 hover:bg-white/5 text-sm text-white flex items-center gap-2"
                                             >
-                                                <Heart size={16} /> 加入我喜欢
+                                                <Heart size={16} className={areSongsAllFavorite(visibleSongs) ? 'text-rose-400 fill-current' : ''} /> {areSongsAllFavorite(visibleSongs) ? '移出我喜欢' : '加入我喜欢'}
                                             </button>
                                         </>
                                     )}
@@ -383,7 +467,7 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                                     {/* ✅ 新增：添加到歌单 */}
                                     <button
                                         onClick={() => {
-                                            setSongsToAdd(songs);
+                                            setSongsToAdd(visibleSongs);
                                             setShowAddToPlaylist(true);
                                             setShowAddMenu(false);
                                         }}
@@ -400,7 +484,7 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
 
             {/* 批量操作工具栏 (悬浮) */}
             {bulkMode && (
-                <div className="sticky top-0 z-20  bg-[#0f172a]/95 backdrop-blur-md border-b border-white/5 px-4 py-3 flex items-center justify-between mb-2">
+                <div className="sticky top-0 z-20  bg-[#121212]/95 backdrop-blur-md border-b border-white/5 px-4 py-3 flex items-center justify-between mb-2">
                     <div className="flex items-center gap-3">
                         <button onClick={() => setBulkMode(false)} className="text-slate-400 hover:text-white">
                             <X size={20} />
@@ -411,13 +495,20 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                         onClick={handleSelectAll}
                         className="text-xs text-indigo-400 font-medium hover:text-indigo-300"
                     >
-                        {selectedIds.size === songs.length ? '取消全选' : '全选'}
+                        {selectedIds.size === visibleSongs.length ? '取消全选' : '全选'}
                     </button>
                 </div>
             )}
 
             {/* 歌曲列表 */}
             <div className={`px-4 min-h-[300px] ${bulkMode ? 'pb-24' : ''}`}>
+                {searchTerm.trim() && (
+                    <div className="flex items-center justify-between text-[11px] text-slate-400 mb-2">
+                        <span>找到 {visibleSongs.length} 首匹配</span>
+                        <button onClick={() => setSearchTerm('')} className="text-indigo-400 hover:text-indigo-300">清空搜索</button>
+                    </div>
+                )}
+
                 {loading && songs.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-20 text-slate-500 gap-3">
                         <Loader2 className="animate-spin text-indigo-500" size={32} />
@@ -425,8 +516,9 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                     </div>
                 ) : (
                     <div className="space-y-1">
-                        {songs.map((song, idx) => {
+                        {visibleSongs.map((song, idx) => {
                             const isSelected = selectedIds.has(song.id);
+                            const originalIndex = songs.findIndex((s) => s.id === song.id);
                             return (
                                 <div key={`${song.id}-${idx}`} className="flex items-center group rounded-xl transition-colors hover:bg-white/5">
                                     {/* 批量选择 Checkbox */}
@@ -462,8 +554,8 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                                             <button
                                                 onClick={() => reorderPlaylistSongs(playlist.id, (() => {
                                                     const newSongs = [...songs];
-                                                    if (idx > 0) {
-                                                        [newSongs[idx], newSongs[idx - 1]] = [newSongs[idx - 1], newSongs[idx]];
+                                                    if (originalIndex > 0) {
+                                                        [newSongs[originalIndex], newSongs[originalIndex - 1]] = [newSongs[originalIndex - 1], newSongs[originalIndex]];
                                                         setSongs(newSongs);
                                                         return newSongs;
                                                     }
@@ -478,9 +570,9 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                                 </div>
                             );
                         })}
-                        {!loading && songs.length === 0 && (
+                        {!loading && visibleSongs.length === 0 && (
                             <div className="text-center py-20 text-slate-500 text-xs">
-                                歌单空空如也
+                                {songs.length === 0 ? '歌单空空如也' : '未找到匹配的歌曲'}
                             </div>
                         )}
                     </div>
@@ -489,7 +581,7 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
 
             {/* 批量操作底部栏 */}
             {bulkMode && selectedIds.size > 0 && (
-                <div className="fixed bottom-0 left-0 right-0 bg-[#0f172a] border-t border-white/5 p-4 z-30 animate-in slide-in-from-bottom flex justify-around safe-area-bottom">
+                <div className="fixed bottom-0 left-0 right-0 bg-[#121212] border-t border-white/5 p-4 z-30 animate-in slide-in-from-bottom flex justify-around safe-area-bottom">
                     <button
                         onClick={() => {
                             songActions.handleBatchAddToQueue(getSelectedSongs());
@@ -499,7 +591,7 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                         className="flex flex-col items-center gap-1 text-slate-300 hover:text-white"
                     >
                         <ListPlus size={20} />
-                        <span className="text-[10px]">下一首播放</span>
+                        <span className="text-[10px]">加入队列</span>
                     </button>
                     {!isFavoritePlaylist && (
                         <>
@@ -511,14 +603,12 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                                 }}
                                 className="flex flex-col items-center gap-1 text-slate-300 hover:text-white"
                             >
-                                <Heart size={20} />
-                                <span className="text-[10px]">收藏</span>
+                                <Heart size={20} className={areSongsAllFavorite(getSelectedSongs()) ? 'text-rose-400 fill-current' : ''} />
+                                <span className="text-[10px]">{areSongsAllFavorite(getSelectedSongs()) ? '取消收藏' : '收藏'}</span>
                             </button>
                         </>
                     )}
 
-
-                    {/* ✅ 新增：批量添加到歌单 */}
                     <button
                         onClick={() => {
                             setSongsToAdd(getSelectedSongs());
@@ -529,7 +619,19 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                         className="flex flex-col items-center gap-1 text-slate-300 hover:text-white"
                     >
                         <ListMusic size={20} />
-                        <span className="text-[10px]">添加到</span>
+                        <span className="text-[10px]">添加到歌单</span>
+                    </button>
+
+                    <button
+                        onClick={() => {
+                            songActions.handleBatchDownload(getSelectedSongs());
+                            setBulkMode(false);
+                            setSelectedIds(new Set());
+                        }}
+                        className="flex flex-col items-center gap-1 text-slate-300 hover:text-white"
+                    >
+                        <Download size={20} />
+                        <span className="text-[10px]">批量下载</span>
                     </button>
 
                     {isLocalPlaylist && (
@@ -553,15 +655,15 @@ const PlaylistDetail: React.FC<PlaylistDetailProps> = ({
                         <div className="space-y-3">
                             <div>
                                 <label className="text-xs text-slate-500 block mb-1">标题</label>
-                                <input value={editTitle} onChange={e => setEditTitle(e.target.value)} className="w-full bg-[#0f172a] text-white px-3 py-2 rounded-lg text-sm border border-white/10 focus:border-indigo-500 outline-none" />
+                                <input value={editTitle} onChange={e => setEditTitle(e.target.value)} className="w-full bg-[#121212] text-white px-3 py-2 rounded-lg text-sm border border-white/10 focus:border-indigo-500 outline-none" />
                             </div>
                             <div>
                                 <label className="text-xs text-slate-500 block mb-1">简介</label>
-                                <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} rows={3} className="w-full bg-[#0f172a] text-white px-3 py-2 rounded-lg text-sm border border-white/10 focus:border-indigo-500 outline-none resize-none" />
+                                <textarea value={editDesc} onChange={e => setEditDesc(e.target.value)} rows={3} className="w-full bg-[#121212] text-white px-3 py-2 rounded-lg text-sm border border-white/10 focus:border-indigo-500 outline-none resize-none" />
                             </div>
                             <div>
                                 <label className="text-xs text-slate-500 block mb-1">封面图片链接</label>
-                                <input value={editCover} onChange={e => setEditCover(e.target.value)} className="w-full bg-[#0f172a] text-white px-3 py-2 rounded-lg text-sm border border-white/10 focus:border-indigo-500 outline-none" placeholder="https://..." />
+                                <input value={editCover} onChange={e => setEditCover(e.target.value)} className="w-full bg-[#121212] text-white px-3 py-2 rounded-lg text-sm border border-white/10 focus:border-indigo-500 outline-none" placeholder="https://..." />
                             </div>
                             <button onClick={saveEdit} className="w-full py-2.5 mt-2 bg-indigo-600 rounded-xl text-white font-bold text-sm hover:bg-indigo-500">保存修改</button>
                         </div>

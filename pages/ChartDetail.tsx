@@ -42,7 +42,7 @@ const ChartDetail: React.FC<ChartDetailProps> = ({ title, gradient, chartId, onB
     };
 
     return (
-        <div className="h-full overflow-y-auto no-scrollbar  bg-slate-900  pb-10 animate-in slide-in-from-right duration-300 relative">
+        <div className="h-full overflow-y-auto no-scrollbar  bg-[#121212]  pb-10 animate-in slide-in-from-right duration-300 relative">
             {/* Header */}
             <div className={`relative w-full h-64 bg-gradient-to-br ${gradient} p-6 flex flex-col justify-between transition-all duration-500`}>
                 <div className="absolute top-0 left-0 right-0 p-4 flex items-center justify-between z-10">
@@ -64,16 +64,16 @@ const ChartDetail: React.FC<ChartDetailProps> = ({ title, gradient, chartId, onB
                         {title}
                         <Crown size={32} className="text-white/20 rotate-12" />
                     </h1>
-                    <p className="text-white/60 text-xs mt-2 font-medium">HillMusic 大数据算法推荐</p>
+                    <p className="text-white/60 text-xs mt-2 font-medium">LynxMusic 大数据算法推荐</p>
                 </div>
 
-                <div className="absolute right-0 bottom-0 opacity-10 pointer-events-none">
+                <div className="absolute right-0 bottom-0 opacity-10 pointer-events-none overflow-hidden">
                     <h1 className="text-9xl font-black text-white -mb-8 -mr-8 italic tracking-tighter">RANK</h1>
                 </div>
             </div>
 
             {/* List */}
-            <div className=" bg-slate-900  -mt-6 rounded-t-3xl relative z-20 px-4 pt-6 min-h-[50vh]">
+            <div className=" bg-[#121212]  -mt-6 rounded-t-3xl relative z-20 px-4 pt-6 min-h-[50vh]">
                 <div className="flex items-center justify-between mb-4 px-2">
                     <span className="text-xs text-slate-500 flex items-center gap-1">
                         <Search size={12} /> 点击歌曲搜索播放资源
@@ -92,7 +92,7 @@ const ChartDetail: React.FC<ChartDetailProps> = ({ title, gradient, chartId, onB
                                 key={song.id}
                                 // [核心] 榜单歌曲点击时，组合 歌名+歌手 进行搜索
                                 onClick={() => onSearch(`${song.title} ${song.artist}`)}
-                                className={`flex items-center py-3 px-2 rounded-xl transition-colors cursor-pointer hover:bg-[#0f172a]/50 active:scale-[0.99]`}
+                                className={`flex items-center py-3 px-2 rounded-xl transition-colors cursor-pointer hover:bg-[#121212]/50 active:scale-[0.99]`}
                             >
                                 {/* Rank */}
                                 <div className="w-8 text-center flex flex-col items-center justify-center mr-3 gap-1">

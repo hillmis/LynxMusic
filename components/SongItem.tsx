@@ -14,6 +14,7 @@ export interface SongItemProps {
   showCover?: boolean;
   showIndex?: boolean;
   onAddToQueue?: (song: Song) => void;
+  onAddToNext?: (song: Song) => void;
   onPlaySong?: (song: Song) => void;
   showMoreButton?: boolean;
   showAddButton?: boolean;
@@ -27,11 +28,12 @@ export const SongItem: React.FC<SongItemProps> = ({
   showCover = false,
   showIndex = true,
   onAddToQueue,
+  onAddToNext,
   onPlaySong,
   showMoreButton = true,
 }) => {
   const player = useAudioPlayer();
-  const songActions = useSongActions();
+  const songActions = useSongActions({ addToQueue: onAddToQueue, addToNext: onAddToNext });
   const [actionSong, setActionSong] = useState<Song | null>(null);
   const [actionOpen, setActionOpen] = useState(false);
 
@@ -41,8 +43,8 @@ export const SongItem: React.FC<SongItemProps> = ({
     else player.playSong(song);
   };
 
-  const quality = song.quality || 'SQ';
-  const isSQ = quality === 'SQ' || quality === 'HR';
+  const quality = song.quality || 'SQ无损';
+  const isSQ = quality === 'SQ无损' || quality === 'HR';
 
   return (
     <>
@@ -95,11 +97,11 @@ export const SongItem: React.FC<SongItemProps> = ({
 
         {showMoreButton && (
           <button
-            onClick={(e) => { e.stopPropagation(); setActionSong(song); setActionOpen(true); }}
-            className="p-2 text-slate-400 hover: hover:text-white rounded-full hover:bg-white/10"
-          >
-            <MoreVertical size={16} />
-          </button>
+        onClick={(e) => { e.stopPropagation(); setActionSong(song); setActionOpen(true); }}
+        className="p-2 text-slate-400 hover: hover:text-white rounded-full hover:bg-white/10"
+      >
+        <MoreVertical size={16} />
+      </button>
         )}
       </div>
 
@@ -109,6 +111,7 @@ export const SongItem: React.FC<SongItemProps> = ({
         onClose={() => setActionOpen(false)}
         onAddToFavorites={songActions.handleAddToFavorites}
         onAddToQueue={songActions.handleAddToQueue}
+        onAddToNext={onAddToNext ? songActions.handleAddToNext : undefined}
         onAddToPlaylist={songActions.handleAddToPlaylist}
         onCreatePlaylistAndAdd={songActions.handleCreatePlaylistAndAdd}
         onDownloadMusic={(s) => songActions.handleDownload(s, 'music')}

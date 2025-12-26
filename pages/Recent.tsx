@@ -1,8 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Clock, PlayCircle, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
 import { Song } from '../types';
-import { getListenRecords, dbClearPlayHistory, ListenRecord } from '../utils/db';
+import { getListenRecords, dbClearPlayHistory, ListenRecord, getTotalListenSeconds } from '../utils/db';
 import { formatDuration } from '../utils/time';
+import { safeToast } from '../utils/fileSystem';
+
+
 
 interface RecentProps {
     onBack: () => void;
@@ -16,7 +19,16 @@ const Recent: React.FC<RecentProps> = ({
     onAddToQueue
 }) => {
     const [records, setRecords] = useState<ListenRecord[]>([]);
+    const [totalSeconds, setTotalSeconds] = useState(0);
+    const [todaySeconds, setTodaySeconds] = useState(0);
+    const [songCount, setSongCount] = useState(0);
+    const [playCount, setPlayCount] = useState(0);
     const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+    const getDayKey = (ts: number) => {
+        const d = new Date(ts);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
+    const todayKey = useMemo(() => getDayKey(Date.now()), []);
 
     useEffect(() => {
         loadData();
@@ -25,30 +37,45 @@ const Recent: React.FC<RecentProps> = ({
     }, []);
 
     const loadData = () => {
-        getListenRecords().then(setRecords);
+        // 可视列表使用清空阈值，统计使用完整数据
+        getListenRecords().then((visible) => {
+            setRecords(visible);
+            setTotalSeconds(getTotalListenSeconds());
+        });
+        getListenRecords({ includeCleared: true }).then((full) => {
+            setPlayCount(full.length);
+            setSongCount(new Set(full.map((r) => r.songId).filter(Boolean)).size);
+            setTotalSeconds(getTotalListenSeconds());
+            const todayTotal = full.reduce((acc, cur) => {
+                const key = cur.dayKey || getDayKey(cur.ts);
+                return key === todayKey ? acc + (cur.playedSeconds || 0) : acc;
+            }, 0);
+            setTodaySeconds(todayTotal);
+        });
     };
 
     const handleClearHistory = async () => {
-        if (confirm('确定要清空所有播放记录吗？')) {
+        if (confirm('确定要清空所有播放记录吗？系统会保留累计听歌时长并覆盖本地播放记录备份。')) {
             await dbClearPlayHistory();
             setRecords([]);
-            window.webapp?.toast?.('记录已清空');
+            // 清空列表后仍保留总统计
+            getListenRecords({ includeCleared: true }).then((full) => {
+                setPlayCount(full.length);
+                setSongCount(new Set(full.map((r) => r.songId).filter(Boolean)).size);
+            });
+            setTotalSeconds(getTotalListenSeconds());
+            safeToast('记录已清空，播放时长已保留');
         }
     };
 
-    const totalSeconds = useMemo(
-        () => records.reduce((acc, cur) => acc + (cur.playedSeconds || 0), 0),
-        [records]
-    );
     const totalDurationText = useMemo(
         () => formatDuration(totalSeconds, { keepSeconds: true }),
         [totalSeconds]
     );
-    const songCount = useMemo(() => {
-        const set = new Set(records.map(r => r.songId).filter(Boolean));
-        return set.size;
-    }, [records]);
-
+    const todayDurationText = useMemo(
+        () => formatDuration(todaySeconds, { keepSeconds: true }),
+        [todaySeconds]
+    );
     /** 分组逻辑：今天、昨天、更早 */
     const grouped = useMemo(() => {
         const groups: { [key: string]: ListenRecord[] } = {
@@ -103,9 +130,9 @@ const Recent: React.FC<RecentProps> = ({
     };
 
     return (
-        <div className="h-full bg-slate-900 overflow-y-auto no-scrollbar pb-20 animate-in slide-in-from-right duration-300">
+        <div className="h-full bg-[#121212] overflow-y-auto no-scrollbar pb-20 animate-in slide-in-from-right duration-300">
             {/* 顶栏 */}
-            <div className="sticky top-0 z-10 bg-slate-900/95 backdrop-blur-md p-4 border-b border-white/5 flex items-center justify-between">
+            <div className="sticky top-0 z-10 bg-[#121212]/95 backdrop-blur-md p-4 border-b border-white/5 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                     <button onClick={onBack} className="p-2 -ml-2 rounded-full hover:bg-white/10 text-white">
                         <ArrowLeft size={24} />
@@ -119,20 +146,26 @@ const Recent: React.FC<RecentProps> = ({
                 )}
             </div>
 
-            {records.length > 0 && (
-                <div className="px-4 pt-4">
-                    <div className="bg-slate-800/40 border border-white/5 rounded-2xl p-3 flex items-center justify-between">
+            <div className="px-4 pt-4">
+                <div className="bg-slate-800/40 border border-white/5 rounded-2xl p-3 flex items-center justify-between">
+                    <div className="space-y-2">
                         <div>
-                            <p className="text-xs text-slate-500">累计听歌时长</p>
+                            <p className="text-xs text-slate-500">今日听歌时长</p>
+                            <p className="text-lg font-bold text-white mt-0.5">{todayDurationText}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-slate-500">总累计听歌时长</p>
                             <p className="text-lg font-bold text-white mt-0.5">{totalDurationText}</p>
                         </div>
-                        <div className="text-xs text-slate-500 text-right">
-                             <p className="text-xs text-slate-500">播放歌曲数</p>
-                            <p className="text-lg font-bold text-white mt-0.5">{songCount}</p>
-                        </div>
+                    </div>
+                    <div className="text-xs text-slate-500 text-right">
+                        <p className="text-xs text-slate-500">播放歌曲数</p>
+                        <p className="text-lg font-bold text-white mt-0.5">{songCount}</p>
+                          <p className="text-xs text-slate-500">播放次数</p>
+                        <p className="text-lg font-bold text-white mt-0.5">{playCount}</p>
                     </div>
                 </div>
-            )}
+            </div>
 
             <div className="p-4">
                 {records.length === 0 ? (
@@ -175,7 +208,7 @@ const Recent: React.FC<RecentProps> = ({
                                                     onClick={() => onPlaySong(song)}
                                                     className="group flex items-center p-2 rounded-xl hover:bg-white/5 active:bg-white/10 transition-colors cursor-pointer"
                                                 >
-                                                    <div className="relative w-12 h-12 rounded-lg overflow-hidden mr-3 bg-[#0f172a] shrink-0">
+                                                    <div className="relative w-12 h-12 rounded-lg overflow-hidden mr-3 bg-[#121212] shrink-0">
                                                         <img src={r.coverUrl || 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=100&q=80'} className="w-full h-full object-cover" loading="lazy" />
                                                         <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
                                                             <PlayCircle size={20} className="text-white" />

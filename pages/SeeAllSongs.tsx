@@ -38,8 +38,8 @@ const SeeAllSongs: React.FC<SeeAllSongsProps> = ({
     }, []);
 
     return (
-        <div className="h-full overflow-y-auto no-scrollbar  bg-slate-900  pb-10 animate-in slide-in-from-right duration-300">
-            <div className="sticky top-0 z-10  bg-slate-900 /95 backdrop-blur-md p-4 flex items-center gap-4 border-b border-white/5 shadow-sm">
+        <div className="h-full overflow-y-auto no-scrollbar  bg-[#121212]  pb-10 animate-in slide-in-from-right duration-300">
+            <div className="sticky top-0 z-10  bg-[#121212] /95 backdrop-blur-md p-4 flex items-center gap-4 border-b border-white/5 shadow-sm">
                 <button onClick={onBack} className="p-2 hover:bg-white/10 rounded-full transition-colors">
                     <ArrowLeft size={24} className="text-white" />
                 </button>

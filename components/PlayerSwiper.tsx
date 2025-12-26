@@ -1,5 +1,4 @@
-
-import React, { useEffect, useRef, useMemo } from 'react';
+﻿import React, { useEffect, useRef, useMemo } from 'react';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Virtual } from 'swiper/modules';
 import { Swiper as SwiperType } from 'swiper';
@@ -27,9 +26,12 @@ interface PlayerSwiperProps {
     onRemoveFromQueue: (id: string) => void;
     onUpdateSong: (song: Song) => void;
     onAddToQueue: (song: Song) => void;
-    // ✅ 接收父组件传递的 ViewMode 状态
+    onAddToNext: (song: Song) => void;
+    // 新增：支持两种视图模式切换
     viewMode: 'music' | 'video';
     setViewMode: (mode: 'music' | 'video') => void;
+    controlsLocked: boolean;
+    variant?: 'overlay' | 'panel';
 }
 
 const PlayerSwiper: React.FC<PlayerSwiperProps> = ({
@@ -49,8 +51,11 @@ const PlayerSwiper: React.FC<PlayerSwiperProps> = ({
     onRemoveFromQueue,
     onUpdateSong,
     onAddToQueue,
-    viewMode,      // ✅
-    setViewMode,   // ✅
+    onAddToNext,
+    viewMode,      // 新增
+    setViewMode,   // 新增
+    controlsLocked,
+    variant = 'overlay',
 }) => {
     const swiperRef = useRef<SwiperType | null>(null);
 
@@ -60,7 +65,7 @@ const PlayerSwiper: React.FC<PlayerSwiperProps> = ({
         return idx >= 0 ? idx : 0;
     }, [currentSong, playlist]);
 
-    // 同步 Swiper 位置
+    // 确保 Swiper 同步位置
     useEffect(() => {
         if (!swiperRef.current) return;
         if (swiperRef.current.activeIndex !== activeIndex) {
@@ -73,12 +78,13 @@ const PlayerSwiper: React.FC<PlayerSwiperProps> = ({
         const song = playlist[newIndex];
         if (!song || !currentSong) return;
 
-        // 只有索引真正改变时才切歌
+        // 滑动切换歌曲时自动播放
         if (song.id !== currentSong.id) {
             onPlayFromQueue(song);
 
-            // ✅ 保持模式：切歌时不强制重置为 music，保持当前 viewMode
-            // Playing.tsx 内部会负责检测新歌是否有 MV，无 MV 则会自动切回 music
+            // 注意：滑动切换时强制设为 music 视图模式
+            // Playing.tsx 中会根据歌曲是否有 MV 链接自动判断显示 MV 按钮
+            // 但默认进入 music 视图
         }
 
         preloadAround(newIndex);
@@ -108,8 +114,12 @@ const PlayerSwiper: React.FC<PlayerSwiperProps> = ({
         return null;
     }
 
+    const containerClass = variant === 'overlay'
+        ? 'fixed inset-0 z-50 bg-black'
+        : 'absolute inset-0 bg-black';
+
     return (
-        <div className="fixed inset-0 z-50 bg-black">
+        <div className={containerClass}>
             <Swiper
                 modules={[Virtual]}
                 direction="vertical"
@@ -157,6 +167,8 @@ const PlayerSwiper: React.FC<PlayerSwiperProps> = ({
                                 viewMode={viewMode}
                                 setViewMode={setViewMode}
                                 onAddToQueue={onAddToQueue}
+                                onAddToNext={onAddToNext}
+                                controlsLocked={controlsLocked}
                             />
                         )}
                     </SwiperSlide>

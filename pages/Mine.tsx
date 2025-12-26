@@ -1,21 +1,24 @@
-﻿
-import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   Settings, Heart, Clock, Plus,
   BarChart3, User, ChevronRight,
   Download, LogIn, UserCog, ChevronDown, ChevronUp, Import, Loader2,
-  Gift
+  Gift, RefreshCw, Camera, Image as ImageIcon // 增加 Image 图标并重命名为 ImageIcon 以免冲突
 } from 'lucide-react';
 import { Playlist } from '../types';
 import {
-  getUserPlaylists, createUserPlaylist, saveImportedPlaylist
+  getUserPlaylists, createUserPlaylist, saveImportedPlaylist, upsertFavoriteFromImport, FAVORITE_PLAYLIST_TITLE, FAVORITE_COVER_URL
 } from '../utils/playlistStore';
-import { getListenRecords, ListenRecord } from '../utils/db';
+import { getListenRecords, ListenRecord, getTotalListenSeconds } from '../utils/db';
 import { formatDuration } from '../utils/time';
 import { getOnlinePlaylistConfigList, readOnlinePlaylistFavorites, writeOnlinePlaylistFavorites, ONLINE_PLAYLIST_FAVORITES_EVENT } from '../utils/onlinePlaylistFavorites';
-import { fetchQQPlaylist, fetchKuwoPlaylist, fetchWangyiPlaylist, fetchKugouPlaylist } from '../utils/api'; // ✅ 引入 fetchKuwoPlaylist
+import { fetchQQPlaylist, fetchKuwoPlaylist, fetchWangyiPlaylist, fetchKugouPlaylist } from '../utils/api';
+import { safeToast } from '../utils/fileSystem';
 
+const toast = safeToast;
 const PREVIEW_COVER_CACHE_KEY = 'hm_preview_covers_v1';
+const USER_PROFILE_KEY = 'hm_user_profile_v1'; // ? 新增存储Key
+
 const readPreviewCovers = (): Record<string, string[]> => {
   try {
     const raw = localStorage.getItem(PREVIEW_COVER_CACHE_KEY);
@@ -43,6 +46,12 @@ interface MineProps {
   onNavigateChart?: () => void;
   onNavigateLocal?: () => void;
   onNavigateCheckIn?: () => void;
+  onNavigateDownloads?: () => void;
+}
+
+interface UserProfile {
+  nickname: string;
+  avatar: string;
 }
 
 /* ================= 页面 ================= */
@@ -53,11 +62,24 @@ const Mine: React.FC<MineProps> = ({
   onNavigateRecent,
   onNavigateChart,
   onNavigateLocal,
-  onNavigateCheckIn
+  onNavigateCheckIn,
+  onNavigateDownloads
 }) => {
   /* ---------- 状态 ---------- */
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [records, setRecords] = useState<ListenRecord[]>([]);
+  const [totalListenSeconds, setTotalListenSeconds] = useState(0);
+  const getDayKey = (ts: number) => {
+    const d = new Date(ts);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const todayKey = useMemo(() => getDayKey(Date.now()), []);
+  const monthStartMs = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - 29);
+    return d.getTime();
+  }, []);
   const [favoriteOnlineIds, setFavoriteOnlineIds] = useState<Set<string>>(new Set());
   const [favoriteOnlineCovers, setFavoriteOnlineCovers] = useState<Record<string, string[]>>({});
   const [openingOnlineId, setOpeningOnlineId] = useState<string | null>(null);
@@ -71,25 +93,88 @@ const Mine: React.FC<MineProps> = ({
   // Stats Collapse State
   const [isStatsExpanded, setIsStatsExpanded] = useState(true);
 
-  // User State (Mock)
+  // User State
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  // ? 新增：用户资料状态
+  const [userProfile, setUserProfile] = useState<UserProfile>({
+    nickname: '游客',
+    avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix'
+  });
+  // 2. 定义文件输入的 Ref
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // 3. 新增：处理本地文件选择
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // 简单校验文件类型
+    if (!file.type.startsWith('image/')) {
+      toast?.('请选择图片文件');
+      return;
+    }
+
+    // 校验文件大小 (例如限制为 2MB，因为 localStorage 容量有限)
+    if (file.size > 10 * 1024 * 1024) {
+      toast?.('图片过大，请选择 10MB 以内的图片');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result;
+      if (typeof result === 'string') {
+        setTempProfile(prev => ({
+          ...prev,
+          avatar: result // 将 Base64 字符串设置为头像
+        }));
+      }
+    };
+    reader.onerror = () => {
+      toast?.('读取图片失败');
+    };
+    reader.readAsDataURL(file); // 读取为 DataURL (Base64)
+
+    // 清空 input，允许重复选择同一张图
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // 触发文件选择点击
+  const triggerFileSelect = () => {
+    fileInputRef.current?.click();
+  };
   // Create Dialog
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
 
-  // ✅ Import Dialog State
+  // Import Dialog State
   const [showImport, setShowImport] = useState(false);
-  // ✅ 修改：importSource 类型包含 'kuwo'
   const [importSource, setImportSource] = useState<'qq' | 'wyy' | 'kuwo' | 'kugou'>('qq');
   const [importId, setImportId] = useState('');
   const [importing, setImporting] = useState(false);
+
+  // ? 新增：编辑资料弹窗状态
+  const [showEditProfile, setShowEditProfile] = useState(false);
+  const [tempProfile, setTempProfile] = useState<UserProfile>({ nickname: '', avatar: '' });
+
 
   /* ================= 初始化 & 加载 ================= */
 
   useEffect(() => {
     const user = localStorage.getItem('user_token');
     if (user) setIsLoggedIn(true);
+
+    // ? 加载本地存储的个人资料
+    const savedProfile = localStorage.getItem(USER_PROFILE_KEY);
+    if (savedProfile) {
+      try {
+        setUserProfile(JSON.parse(savedProfile));
+      } catch (e) {
+        console.error('Failed to parse profile', e);
+      }
+    }
   }, []);
 
   const loadOnlineFavorites = () => {
@@ -99,7 +184,9 @@ const Mine: React.FC<MineProps> = ({
 
   const load = async () => {
     setPlaylists(await getUserPlaylists());
-    setRecords(await getListenRecords());
+    const list = await getListenRecords({ includeCleared: true });
+    setRecords(list);
+    setTotalListenSeconds(getTotalListenSeconds());
     loadOnlineFavorites();
   };
 
@@ -119,6 +206,20 @@ const Mine: React.FC<MineProps> = ({
   const otherPlaylists = useMemo(() => playlists.filter(p => p.title !== '我喜欢'), [playlists]);
 
   /* ================= 统计逻辑 ================= */
+  // ... (保持原样)
+  const rangeStats = useMemo(() => {
+    let todaySeconds = 0;
+    let monthSeconds = 0;
+    records.forEach(r => {
+      const seconds = Math.max(0, r.playedSeconds || 0);
+      const ts = r.ts || 0;
+      const key = r.dayKey || getDayKey(ts);
+      if (key === todayKey) todaySeconds += seconds;
+      if (ts >= monthStartMs) monthSeconds += seconds;
+    });
+    return { todaySeconds, monthSeconds };
+  }, [records, todayKey, monthStartMs]);
+
   const heatmapData = useMemo(() => {
     const days = 30; // 6 cols * 5 rows = 30 days
     const result = [];
@@ -154,10 +255,9 @@ const Mine: React.FC<MineProps> = ({
     return result;
   }, [records]);
 
-  const totalListenSeconds = useMemo(() => {
-    return records.reduce((acc, cur) => acc + (cur.playedSeconds || 0), 0);
-  }, [records]);
   const totalListenText = useMemo(() => formatDuration(totalListenSeconds), [totalListenSeconds]);
+  const todayListenText = useMemo(() => formatDuration(rangeStats.todaySeconds), [rangeStats.todaySeconds]);
+  const monthListenText = useMemo(() => formatDuration(rangeStats.monthSeconds), [rangeStats.monthSeconds]);
 
   /* ================= 行为 ================= */
   const createPlaylist = async () => {
@@ -167,11 +267,11 @@ const Mine: React.FC<MineProps> = ({
     setShowCreate(false);
   };
 
-  // ✅ 处理歌单导入
+  // 处理歌单导入
   const handleImportPlaylist = async () => {
     const id = importId.trim();
     if (!id) {
-      window.webapp?.toast?.('请输入歌单ID');
+      toast?.('请输入歌单ID');
       return;
     }
 
@@ -179,7 +279,6 @@ const Mine: React.FC<MineProps> = ({
     let playlist = null;
 
     try {
-      // ✅ 区分来源
       if (importSource === 'qq') {
         playlist = await fetchQQPlaylist(id);
       } else if (importSource === 'kuwo') {
@@ -189,21 +288,34 @@ const Mine: React.FC<MineProps> = ({
       } else if (importSource === 'kugou') {
         playlist = await fetchKugouPlaylist(id);
       } else {
-        window.webapp?.toast?.('该平台暂未支持');
+        toast?.('该平台暂未支持');
         setImporting(false);
         return;
       }
 
       if (playlist) {
-        await saveImportedPlaylist(playlist);
-        window.webapp?.toast?.(`成功导入: ${playlist.title}`);
+        if (playlist.title === FAVORITE_PLAYLIST_TITLE) {
+          const useFavorite = window.confirm('检测到“我喜欢”歌单。选择“确定”导入到系统“我喜欢”，选择“取消”将创建新的歌单。');
+          if (useFavorite) {
+            const override = window.confirm('导入到系统“我喜欢”：确定=覆盖现有，取消=合并。');
+            await upsertFavoriteFromImport(playlist, override ? 'override' : 'merge');
+            toast?.(`已导入到系统“我喜欢” (${override ? '覆盖' : '合并'})`);
+          } else {
+            playlist = { ...playlist, id: `${playlist.id}_import`, title: `${playlist.title}(导入)` };
+            await saveImportedPlaylist(playlist);
+            toast?.(`成功导入: ${playlist.title}`);
+          }
+        } else {
+          await saveImportedPlaylist(playlist);
+          toast?.(`成功导入: ${playlist.title}`);
+        }
         setShowImport(false);
         setImportId('');
       } else {
-        window.webapp?.toast?.('导入失败，请检查ID是否正确');
+        toast?.('导入失败，请检查ID是否正确');
       }
     } catch (e) {
-      window.webapp?.toast?.('网络错误，请稍后重试');
+      toast?.('网络错误，请稍后重试');
     } finally {
       setImporting(false);
     }
@@ -215,13 +327,13 @@ const Mine: React.FC<MineProps> = ({
     if (cfg.type === 'qq_id') {
       if (openingOnlineId) return;
       setOpeningOnlineId(cfg.id);
-      window.webapp?.toast?.('正在获取歌单...');
+      toast?.('正在获取歌单...');
       try {
         const pl = await fetchQQPlaylist(cfg.key);
         if (pl) onNavigatePlaylist(pl);
-        else window.webapp?.toast?.('获取歌单失败');
+        else toast?.('获取歌单失败');
       } catch (e) {
-        window.webapp?.toast?.('网络错误，请稍后重试');
+        toast?.('网络错误，请稍后重试');
       } finally {
         setOpeningOnlineId(null);
       }
@@ -231,7 +343,7 @@ const Mine: React.FC<MineProps> = ({
     const pl: Playlist = {
       id: `dp_${cfg.id}`,
       title: cfg.name,
-      creator: 'HillMusic',
+      creator: 'LynxMusic',
       coverUrl: '',
       songCount: 50,
       description: `精选全网${cfg.name}，实时更新`,
@@ -246,10 +358,10 @@ const Mine: React.FC<MineProps> = ({
     const next = new Set(favoriteOnlineIds);
     if (next.has(cfgId)) {
       next.delete(cfgId);
-      window.webapp?.toast?.('已取消收藏');
+      toast?.('已取消收藏');
     } else {
       next.add(cfgId);
-      window.webapp?.toast?.('已收藏歌单');
+      toast?.('已收藏歌单');
     }
     setFavoriteOnlineIds(next);
     writeOnlinePlaylistFavorites(next);
@@ -259,24 +371,46 @@ const Mine: React.FC<MineProps> = ({
     return favoriteOnlineCovers[`dp_all_${cfgId}`] || [];
   };
 
-  const getPlaylistCover = (playlist: Playlist) => {
-    return playlist.coverUrl || playlist.coverImgStack?.[0] || playlist.songs?.[0]?.coverUrl || '';
-  };
-
   const handleLogin = () => {
     localStorage.setItem('user_token', 'mock_token');
     setIsLoggedIn(true);
-    window.webapp?.toast?.('登录成功 (模拟)');
+    toast?.('登录成功 (模拟)');
   };
 
   const handleLogout = () => {
     if (!confirm('确定退出登录吗？')) return;
     localStorage.removeItem('user_token');
     setIsLoggedIn(false);
-    window.webapp?.toast?.('已退出登录');
+    toast?.('已退出登录');
   };
 
-  // Helper for heatmap colors
+  // ? 新增：打开编辑资料
+  const openEditProfile = () => {
+    setTempProfile({ ...userProfile });
+    setShowEditProfile(true);
+  };
+
+  // ? 新增：随机生成头像
+  const handleRandomAvatar = () => {
+    const randomSeed = Math.random().toString(36).substring(7);
+    setTempProfile(prev => ({
+      ...prev,
+      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${randomSeed}`
+    }));
+  };
+
+  // ? 新增：保存资料
+  const handleSaveProfile = () => {
+    if (!tempProfile.nickname.trim()) {
+      toast?.('昵称不能为空');
+      return;
+    }
+    setUserProfile(tempProfile);
+    localStorage.setItem(USER_PROFILE_KEY, JSON.stringify(tempProfile));
+    setShowEditProfile(false);
+    toast?.('个人资料已更新');
+  };
+
   const getHeatmapColor = (level: number) => {
     switch (level) {
       case 0: return 'bg-slate-700/50';
@@ -291,22 +425,24 @@ const Mine: React.FC<MineProps> = ({
   /* ================= UI ================= */
 
   return (
-    <div className="h-full overflow-y-auto bg-[#0f172a] pb-32 no-scrollbar transition-colors">
+    <div className="h-full overflow-y-auto bg-[#121212] pb-32 no-scrollbar transition-colors">
 
       {/* 1. 用户信息区域 */}
-      <div className="pt-10 px-6 pb-8 bg-gradient-to-b from-indigo-900/40 to-[#0f172a] border-b border-transparent">
+      <div className="pt-5 px-6 pb-4 bg-gradient-to-b from-indigo-900/10 to-[#121212]">
         <div className="flex justify-between items-start mb-6">
           <div className="flex items-center gap-4">
+            {/* 头像显示 */}
             <div className="w-16 h-16 rounded-full bg-slate-800 border-2 border-indigo-500/30 flex items-center justify-center text-slate-400 overflow-hidden shadow-lg relative group">
               {isLoggedIn ? (
-                <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Felix" alt="avatar" className="w-full h-full object-cover" />
+                <img src={userProfile.avatar} alt="avatar" className="w-full h-full object-cover" />
               ) : (
                 <User size={32} />
               )}
             </div>
             <div>
+              {/* 昵称显示 */}
               <h1 className="text-xl font-bold text-white flex items-center gap-2">
-                {isLoggedIn ? '游客' : '未登录用户'}
+                {isLoggedIn ? userProfile.nickname : '未登录用户'}
               </h1>
               <div className="flex gap-3 mt-2 text-xs text-slate-500">
                 <span><b className="text-white">{playlists.length}</b> 歌单</span>
@@ -323,7 +459,11 @@ const Mine: React.FC<MineProps> = ({
         <div className="flex gap-3">
           {isLoggedIn ? (
             <>
-              <button className="flex-1 bg-slate-800  text-slate-300 py-2.5 rounded-xl text-xs font-bold border border-white/5 active:scale-95 transition-transform flex items-center justify-center gap-2">
+              {/* ? 修改：点击事件绑定 openEditProfile */}
+              <button
+                onClick={openEditProfile}
+                className="flex-1 bg-slate-800 text-slate-300 py-2.5 rounded-xl text-xs font-bold border border-white/5 active:scale-95 transition-transform flex items-center justify-center gap-2"
+              >
                 <UserCog size={14} /> 编辑资料
               </button>
               <button onClick={handleLogout} className="flex-1 bg-slate-800 text-red-400 py-2.5 rounded-xl text-xs font-bold border border-white/5 active:scale-95 transition-transform flex items-center justify-center gap-2">
@@ -339,7 +479,7 @@ const Mine: React.FC<MineProps> = ({
       </div>
 
       {/* 2. 快捷入口 Grid */}
-      <div className="px-6 grid grid-cols-2 gap-3 mb-6 mt-6">
+      <div className="px-6 grid grid-cols-2 gap-3 mb-6">
         <div
           onClick={() => favorite && onNavigatePlaylist(favorite)}
           className="bg-slate-800/40 p-4 rounded-2xl flex items-center gap-3 cursor-pointer shadow-sm hover:shadow-md transition-all border border-white/5 group"
@@ -368,8 +508,9 @@ const Mine: React.FC<MineProps> = ({
 
         <div
           onClick={() => {
-            if (onNavigateLocal) onNavigateLocal();
-            else window.webapp?.toast?.('本地音乐管理请前往"本地"页面');
+            if (onNavigateDownloads) onNavigateDownloads();
+            else if (onNavigateLocal) onNavigateLocal();
+            else toast?.('本地音乐管理请前往\"本地\"页面');
           }}
           className="bg-slate-800/40 p-4 rounded-2xl flex items-center gap-3 cursor-pointer shadow-sm hover:shadow-md transition-all border border-white/5 group"
         >
@@ -377,15 +518,15 @@ const Mine: React.FC<MineProps> = ({
             <Download size={20} />
           </div>
           <div>
-            <div className="text-white font-bold text-sm">本地下载</div>
-            <div className="text-xs text-slate-500">已缓存歌曲</div>
+            <div className="text-white font-bold text-sm">下载管理</div>
+            <div className="text-xs text-slate-500">下载任务</div>
           </div>
         </div>
 
         <div
           onClick={() => {
             if (onNavigateCheckIn) onNavigateCheckIn();
-            else window.webapp?.toast?.('请前往签到/福利页面查看');
+            else toast?.('请前往签到/福利页面查看');
           }}
           className="bg-slate-800/40 p-4 rounded-2xl flex items-center gap-3 cursor-pointer shadow-sm hover:shadow-md transition-all border border-white/5 group"
         >
@@ -417,13 +558,10 @@ const Mine: React.FC<MineProps> = ({
           {/* Content */}
           {isStatsExpanded && (
             <div className="px-5 pb-5 animate-in slide-in-from-top-2 duration-300">
-              <div className="flex justify-between items-end mb-4">
+
+              <div className="flex justify-between items-end mb-3">
                 <div>
-                  <p className="text-xs text-slate-500 mb-1">最近30天</p>
-                  <p className="text-xl font-bold text-white flex items-baseline gap-1">
-                    {totalListenText}
-                    <span className="text-xs font-normal text-slate-400">累计</span>
-                  </p>
+                  <p className="text-xs text-slate-500 mb-1">最近30天分布</p>
                 </div>
                 <button
                   onClick={() => onNavigateChart?.()}
@@ -458,6 +596,21 @@ const Mine: React.FC<MineProps> = ({
                   <div className="w-2 h-2 rounded-sm bg-indigo-400"></div>
                 </div>
                 <span className="text-[9px] text-slate-600">多</span>
+              </div>
+              <div className="grid grid-cols-3 gap-3 mt-4">
+                <div className="bg-slate-900/40 border border-white/5 rounded-2xl p-3">
+                  <p className="text-[11px] text-slate-500">今日</p>
+                  <p className="text-sm font-bold text-white mt-1">{todayListenText}</p>
+                </div>
+                <div className="bg-slate-900/40 border border-white/5 rounded-2xl p-3">
+                  <p className="text-[11px] text-slate-500">近30天</p>
+                  <p className="text-sm font-bold text-white mt-1">{monthListenText}</p>
+
+                </div>
+                <div className="bg-slate-900/40 border border-white/5 rounded-2xl p-3">
+                  <p className="text-[11px] text-slate-500">总累计</p>
+                  <p className="text-sm font-bold text-white mt-1">{totalListenText}</p>
+                </div>
               </div>
             </div>
           )}
@@ -533,7 +686,7 @@ const Mine: React.FC<MineProps> = ({
             <span className="text-xs text-slate-500 font-normal">({playlists.length})</span>
           </h2>
           <div className="flex gap-2">
-            {/* ✅ 导入按钮 */}
+            {/* 导入按钮 */}
             <button
               onClick={() => { setShowImport(true); setImportId(''); }}
               className="p-1.5 bg-slate-800 rounded-lg hover:bg-slate-700 text-slate-300 active:scale-90 transition-transform"
@@ -594,7 +747,6 @@ const Mine: React.FC<MineProps> = ({
               >
                 <div className="w-14 h-14 rounded-xl mr-3 bg-slate-800 shadow-md overflow-hidden flex-shrink-0 relative">
                   <img src={pl.coverUrl} className="w-full h-full object-cover" alt={pl.title} />
-                  {/* ✅ 导入角标 */}
                   {isQQ && <div className="absolute top-0 right-0 bg-green-500 text-white text-[8px] px-1 rounded-bl-md font-bold shadow-sm">QQ</div>}
                   {isKuwo && <div className="absolute top-0 right-0 bg-yellow-500 text-white text-[8px] px-1 rounded-bl-md font-bold shadow-sm">KW</div>}
                   {isWyy && <div className="absolute top-0 right-0 bg-red-500 text-white text-[8px] px-1 rounded-bl-md font-bold shadow-sm">WY</div>}
@@ -616,7 +768,7 @@ const Mine: React.FC<MineProps> = ({
       {/* Dialog: Create Playlist */}
       {(showCreate) && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-6 animate-in fade-in">
-          <div className="bg-slate-900 w-full max-w-xs rounded-2xl p-6 border border-white/10 shadow-2xl">
+          <div className="bg-[#121212] w-full max-w-xs rounded-2xl p-6 border border-white/10 shadow-2xl">
             <h3 className="text-white font-bold text-lg mb-4">新建歌单</h3>
             <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="输入歌单名称" className="w-full bg-slate-800 text-white p-3 rounded-xl text-sm outline-none border border-transparent focus:border-indigo-500" autoFocus />
             <div className="flex gap-3 mt-6">
@@ -627,10 +779,101 @@ const Mine: React.FC<MineProps> = ({
         </div>
       )}
 
-      {/* ✅ Dialog: Import Playlist */}
+      {/* ? Dialog: Edit Profile */}
+      {showEditProfile && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-6 animate-in fade-in">
+          <div className="bg-[#121212] w-full max-w-sm rounded-2xl p-6 border border-white/10 shadow-2xl">
+            <h3 className="text-white font-bold text-lg mb-6 text-center">编辑个人资料</h3>
+
+            <div className="flex flex-col items-center gap-4 mb-6">
+              {/* 头像预览区 */}
+              <div className="relative group">
+                <div
+                  className="w-24 h-24 rounded-full bg-slate-800 border-2 border-indigo-500/50 overflow-hidden shadow-xl cursor-pointer"
+                  onClick={triggerFileSelect} // 点击头像也可以触发选择
+                >
+                  <img src={tempProfile.avatar} alt="preview" className="w-full h-full object-cover" />
+                </div>
+
+                {/* 随机头像按钮 */}
+                <button
+                  onClick={handleRandomAvatar}
+                  className="absolute bottom-0 right-0 p-2 bg-indigo-600 rounded-full text-white shadow-lg hover:bg-indigo-500 transition-colors z-10"
+                  title="随机生成头像"
+                >
+                  <RefreshCw size={14} />
+                </button>
+              </div>
+
+              {/* 隐藏的文件输入框 */}
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileSelect}
+                accept="image/*"
+                className="hidden"
+              />
+
+              {/* 头像设置操作区 */}
+              <div className="w-full space-y-3">
+                {/* 选项 1: 本地相册 */}
+                <button
+                  onClick={triggerFileSelect}
+                  className="w-full py-2 bg-slate-800 hover:bg-slate-700 border border-white/5 rounded-xl text-xs text-slate-300 flex items-center justify-center gap-2 transition-colors"
+                >
+                  <ImageIcon size={14} /> 从相册选择图片
+                </button>
+
+                {/* 选项 2: 网络链接 */}
+                <div>
+                  <p className="text-[10px] text-slate-500 mb-1 ml-1">或输入图片链接</p>
+                  <div className="flex items-center gap-2 bg-slate-800 rounded-xl px-3 py-2 border border-white/5">
+                    <Camera size={14} className="text-slate-500" />
+                    <input
+                      value={tempProfile.avatar}
+                      onChange={(e) => setTempProfile({ ...tempProfile, avatar: e.target.value })}
+                      placeholder="https://..."
+                      className="flex-1 bg-transparent text-xs text-white outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 昵称编辑区 */}
+            <div className="mb-6">
+              <p className="text-[10px] text-slate-500 mb-1 ml-1">昵称</p>
+              <input
+                value={tempProfile.nickname}
+                onChange={(e) => setTempProfile({ ...tempProfile, nickname: e.target.value })}
+                placeholder="请输入昵称"
+                className="w-full bg-slate-800 text-white p-3 rounded-xl text-sm outline-none border border-transparent focus:border-indigo-500 transition-all"
+              />
+            </div>
+
+            {/* 按钮区 */}
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowEditProfile(false)}
+                className="flex-1 py-2.5 rounded-xl bg-slate-800 text-slate-300 font-bold text-sm hover:bg-slate-700 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleSaveProfile}
+                className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white font-bold text-sm hover:bg-indigo-500 shadow-lg shadow-indigo-900/30 transition-all active:scale-95"
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dialog: Import Playlist */}
       {showImport && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-6 animate-in fade-in">
-          <div className="bg-slate-900 w-full max-w-sm rounded-2xl p-6 border border-white/10 shadow-2xl">
+        <div className="fixed inset-0  backdrop-blur-sm flex items-center justify-center z-50 p-6 animate-in fade-in">
+          <div className="bg-[#121212] w-full max-w-sm rounded-2xl p-6 border border-white/10 shadow-2xl">
             <h3 className="text-white font-bold text-lg mb-4">导入外部歌单</h3>
 
             {/* Source Select */}
@@ -641,7 +884,6 @@ const Mine: React.FC<MineProps> = ({
               >
                 QQ
               </button>
-              {/* ✅ 启用酷我按钮 */}
               <button
                 onClick={() => setImportSource('kuwo')}
                 className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all border ${importSource === 'kuwo' ? 'bg-yellow-500 text-white border-yellow-500' : 'bg-slate-800 text-slate-500 border-transparent'}`}

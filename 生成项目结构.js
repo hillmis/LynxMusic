@@ -17,7 +17,7 @@ function generateTree(dir, prefix = '') {
         const stat = statSync(fullPath);
 
         // 跳过不需要的文件夹
-        if (['node_modules', '.git', 'dist', 'build', "生成项目结构.js"].includes(file)) {
+        if (['node_modules', '.git', 'dist', 'build', "生成项目结构.js", " project-structure.txt"].includes(file)) {
             return;
         }
 

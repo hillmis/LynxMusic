@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+﻿import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Song } from '../types';
 import {
   ChevronDown, Play, Pause, Repeat, Repeat1, Shuffle, Heart, ListMusic,
@@ -10,8 +9,11 @@ import {
 import 'swiper/css';
 import { useSongActions } from '../hooks/useSongActions';
 import SongActionSheet from '../components/SongActionSheet';
-import { fetchMusicVideo } from '../utils/api';
+import PlaySettingsSheet from '../components/PlaySettingsSheet';
+import { fetchMusicVideo, searchMusic, fetchSongDetail } from '../utils/api';
 import { isSongInFavorites } from '../utils/playlistStore';
+import { safeToast, getNative, saveDownloadedMedia, saveTextFile } from '../utils/fileSystem';
+import { dbSaveLocalSong, dbGetLocalSongs} from '../utils/db';
 
 interface PlayingProps {
   song: Song;
@@ -32,6 +34,8 @@ interface PlayingProps {
   viewMode: 'music' | 'video';
   setViewMode: (mode: 'music' | 'video') => void;
   onAddToQueue: (song: Song) => void;
+  onAddToNext: (song: Song) => void;
+  controlsLocked: boolean;
 }
 
 const Playing: React.FC<PlayingProps> = ({
@@ -39,13 +43,47 @@ const Playing: React.FC<PlayingProps> = ({
   onClose, onTogglePlay, onNext, onPrev, onSeek,
   onPlayFromQueue, onRemoveFromQueue, isActiveSlide,
   viewMode, setViewMode,
-  onAddToQueue
+  onAddToQueue,
+  onAddToNext,
+  controlsLocked
 }) => {
+  const PLAYING_SETTING_KEY = 'hm_playing_settings';
+  // 检查是否全局全屏
+  const isGlobalFullscreen = localStorage.getItem('hm_setting_fullscreen') === 'true';
+
+  const loadPlaySettings = () => {
+    try {
+      const raw = localStorage.getItem(PLAYING_SETTING_KEY);
+      // 如果全局全屏开启，强制默认为 immersive (沉浸模式)
+      const defaultLayout = isGlobalFullscreen ? 'immersive' : 'classic';
+      
+      if (!raw) return { autoFetchMeta: true, preferHiRes: true, autoHiRes: true, personalize: false, layoutStyle: defaultLayout };
+      const parsed = JSON.parse(raw);
+      return {
+        autoFetchMeta: !!parsed.autoFetchMeta,
+        preferHiRes: !!parsed.preferHiRes,
+        autoHiRes: parsed.autoHiRes ?? true,
+        personalize: !!parsed.personalize,
+        // 如果全局全屏，忽略存储的设置，强制 immersive
+        layoutStyle: isGlobalFullscreen ? 'immersive' : (parsed.layoutStyle === 'immersive' ? 'immersive' : 'classic'),
+      };
+    } catch {
+      return { autoFetchMeta: true, preferHiRes: true, autoHiRes: true, personalize: false, layoutStyle: isGlobalFullscreen ? 'immersive' : 'classic' };
+    }
+  };
+
   const [showLyrics, setShowLyrics] = useState(false);
   const [showQueue, setShowQueue] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isFavorite, setIsFavorite] = useState(false);
+  const [showPlaySettings, setShowPlaySettings] = useState(false);
+  const [playSettings, setPlaySettings] = useState(loadPlaySettings());
   const [coverLyricPos, setCoverLyricPos] = useState<number>(0.5);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const coverTextWrapperRef = useRef<HTMLDivElement>(null);
+  const coverTextInnerRef = useRef<HTMLSpanElement>(null);
+  const [coverScrollDistance, setCoverScrollDistance] = useState(0);
+  const coverScrollRafRef = useRef<number>();
 
 
   const scrollToActiveLyric = (behavior: ScrollBehavior = 'smooth') => {
@@ -57,10 +95,10 @@ const Playing: React.FC<PlayingProps> = ({
   };
 
   // 定义 quality 和 isSQ 变量
-  const quality = song.quality || 'SQ';
-  const isSQ = quality === 'SQ' || quality === 'HR';
+  const quality = song.quality || 'SQ无损';
+  const isSQ = quality === 'SQ无损' || quality === 'HR';
 
-  const songActions = useSongActions({ addToQueue: onAddToQueue });
+  const songActions = useSongActions({ addToQueue: onAddToQueue, addToNext: onAddToNext });
   const [actionOpen, setActionOpen] = useState(false);
 
   const [lyricsLines, setLyricsLines] = useState<{ time: number, text: string }[]>([]);
@@ -69,6 +107,185 @@ const Playing: React.FC<PlayingProps> = ({
 
   const isUserScrolling = useRef(false);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isImmersive = playSettings.personalize && playSettings.layoutStyle === 'immersive';
+
+  useEffect(() => {
+    localStorage.setItem(PLAYING_SETTING_KEY, JSON.stringify(playSettings));
+  }, [playSettings]);
+
+  // 管理非全局全屏下的临时全屏状态
+  useEffect(() => {
+    // 如果是全局全屏，这里不做处理（由系统级保持全屏）
+    if (isGlobalFullscreen) return;
+
+    const native = getNative();
+    if (!native?.control?.setFullscreen) return;
+
+    if (playSettings.layoutStyle === 'immersive') {
+      // 切换到沉浸模式 -> 开启临时全屏
+      native.control.setFullscreen(true);
+    } else {
+      // 切换回经典模式 -> 关闭临时全屏
+      native.control.setFullscreen(false);
+    }
+
+    return () => {
+      // 卸载组件（退出播放页）时：
+      // 如果当前是沉浸模式且不是全局全屏，需要关闭全屏
+      if (playSettings.layoutStyle === 'immersive') {
+        native.control.setFullscreen(false);
+      }
+    };
+  }, [playSettings.layoutStyle, isGlobalFullscreen]);
+
+  const togglePlaySetting = (key: keyof typeof playSettings, label: string) => {
+    setPlaySettings(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      safeToast(`${label}：${next[key] ? '已开启' : '已关闭'}`);
+      return next;
+    });
+  };
+
+// --- 核心修复：完善词图匹配逻辑 ---
+  const handleManualMatchMeta = async () => {
+    if (!song) return;
+    safeToast('正在搜索匹配信息...');
+
+    try {
+      // 1. 联网搜索
+      // 为了提高准确率，去除括号内的内容再搜索 (如 "歌曲(Live)" -> "歌曲")
+      const cleanTitle = song.title.replace(/\(.*\)|（.*）/g, '').trim();
+      const keywords = `${cleanTitle} ${song.artist}`.trim();
+      
+      const searchResults = await searchMusic(keywords);
+      
+      if (!searchResults || searchResults.length === 0) {
+        safeToast('未找到匹配的歌曲信息');
+        return;
+      }
+
+      // 默认取第一个匹配项
+      const bestMatch = searchResults[0];
+      const detail = await fetchSongDetail(bestMatch);
+      
+      let isUpdated = false;
+      
+      // 更新内存中的对象 (用于即时显示)
+      // 注意：直接修改 props 对象在 React 中是不推荐的，但在这里为了即时反馈且不重载整个播放器，
+      // 我们采用原地修改引用 + 触发状态更新的策略。
+      
+      // 2. 处理歌词
+      if (detail.lyrics && detail.lyrics.length > 10) {
+        // 如果是本地音乐，保存到文件
+        if (song.source === 'local' || song.path) {
+           const lrcName = `${song.title}-${song.artist}.lrc`;
+           const lrcPath = saveTextFile(lrcName, detail.lyrics, 'lrcs');
+           if (lrcPath) {
+             song.lyrics = `file://${lrcPath}`; // 更新路径
+           } else {
+             song.lyrics = detail.lyrics; // 降级：只更新内存
+           }
+        } else {
+           song.lyrics = detail.lyrics; // 在线音乐直接更新内存
+        }
+        
+        // 强制刷新歌词解析
+        const lines = detail.lyrics.split('\n')
+          .map(line => {
+            const match = line.match(/^\[(\d+):(\d+)\.(\d+)\](.*)/);
+            if (match) {
+              const min = parseInt(match[1]);
+              const sec = parseInt(match[2]);
+              const ms = parseInt(match[3]);
+              const time = min * 60 + sec + ms / 100;
+              return { time, text: match[4].trim() };
+            }
+            return null;
+          })
+          .filter((item): item is { time: number, text: string } => item !== null && item.text !== '');
+        setLyricsLines(lines);
+        isUpdated = true;
+      }
+
+      // 3. 处理封面
+      if (detail.coverUrl && !detail.coverUrl.includes('unsplash')) {
+         // 如果是本地音乐，下载并保存封面
+         if ((song.source === 'local' || song.path) && song.title) {
+            try {
+                safeToast('正在下载高清封面...');
+                const resp = await fetch(detail.coverUrl);
+                const blob = await resp.blob();
+                const base64 = await new Promise<string>((resolve) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result as string);
+                    reader.readAsDataURL(blob);
+                });
+                
+                const picName = `${song.title}-${song.artist}.jpg`;
+                const picPath = saveDownloadedMedia(picName, base64, 'picture');
+                
+                if (picPath) {
+                    const newCoverPath = `file://${picPath}`;
+                    song.coverUrl = newCoverPath;
+                    // 强制刷新背景图 (通过触发重绘或简单的状态切换，这里React会根据key或props变化自动刷，
+                    // 但由于我们改的是引用，可能需要一点黑魔法，比如切换一下 showLyrics)
+                } else {
+                    song.coverUrl = detail.coverUrl;
+                }
+            } catch (e) {
+                console.warn('Cover download failed, using remote url', e);
+                song.coverUrl = detail.coverUrl;
+            }
+         } else {
+             song.coverUrl = detail.coverUrl;
+         }
+         isUpdated = true;
+      }
+
+      // 4. 如果是本地音乐，更新数据库
+      if (isUpdated && (song.source === 'local' || song.path)) {
+          // 构造符合 LocalSong 接口的对象
+          const dbItem = {
+              ...song,
+              addDate: Date.now(), // 保持活跃
+              playCount: 0, // 保持原样最好，这里简化
+              source: song.source || 'local',
+              quality: song.quality || 'Local'
+          };
+          // @ts-ignore
+          await dbSaveLocalSong(dbItem);
+          // 通知外部列表刷新
+          window.dispatchEvent(new Event('hm-local-refresh'));
+      }
+
+      if (isUpdated) {
+          safeToast('匹配成功，已更新信息');
+          // 触发一个小状态变化以强制重新渲染图片
+          setShowLyrics(prev => !prev);
+          setTimeout(() => setShowLyrics(prev => !prev), 50);
+      } else {
+          safeToast('未发现更好的元数据');
+      }
+
+    } catch (e) {
+      console.error(e);
+      safeToast('匹配过程中发生错误');
+    }
+  };
+
+  const handleManualHiRes = () => {
+    safeToast('正在尝试获取更高音质...');
+    // 具体提质逻辑可在此处对接接口
+  };
+
+  const handleLayoutChange = (layout: 'classic' | 'immersive') => {
+    if (isGlobalFullscreen && layout === 'classic') {
+        safeToast('全局全屏模式下无法切换到经典样式');
+        return;
+    }
+    setPlaySettings(prev => ({ ...prev, layoutStyle: layout }));
+    safeToast(`已切换为${layout === 'classic' ? '经典' : '沉浸'}样式`);
+  };
 
   // 视频专用
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -77,30 +294,55 @@ const Playing: React.FC<PlayingProps> = ({
     currentTime: 0,
     duration: 0
   });
+  const landscapeRequestRef = useRef<{ requestedAt: number; active: boolean }>({ requestedAt: 0, active: false });
+  const isVideoFullscreen = viewMode === 'video' && isFullscreen;
+  // 记录每首歌在不同模式下的进度
+  const progressMemoryRef = useRef<Record<string, { music?: number; video?: number }>>({});
 
-  // MV 自动获取逻辑
+  // 主动控制视频播放/暂停，避免依赖音频播放状态
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    if (viewMode === 'video' && isActiveSlide && song.mvUrl) {
+      el.play().catch(() => { });
+    } else {
+      el.pause();
+    }
+  }, [viewMode, isActiveSlide, song.mvUrl]);
+
+  // MV 自动获取逻辑：保持模式切换流畅，即使暂无 MV 也不强制回退
   useEffect(() => {
     if (viewMode === 'video' && isActiveSlide && !song.mvUrl) {
       fetchMusicVideo(song.title).then((url) => {
         if (url) {
           song.mvUrl = url;
-          // 可以在这里强制刷新一下，或者由于 song 属性变更自动触发重绘
+          // 依赖 song 属性变更触发重绘
         } else {
-          window.webapp?.toast?.('未找到该歌曲的 MV');
-          setViewMode('music'); // 没找到自动切回音乐
+          safeToast('未找到该歌曲的 MV');
+          // 保持在视频模式，交由用户自行切换
         }
       });
     }
   }, [viewMode, isActiveSlide, song]);
 
-  useEffect(() => {
+  const refreshFavorite = () => {
     if (!song?.id) {
       setIsFavorite(false);
       return;
     }
     isSongInFavorites(song.id).then(setIsFavorite);
+  };
+
+  useEffect(() => {
+    refreshFavorite();
     const positions = [2 / 7, 4 / 7, 6 / 7];
     setCoverLyricPos(positions[Math.floor(Math.random() * positions.length)]);
+  }, [song?.id]);
+
+  useEffect(() => {
+    const handler = () => refreshFavorite();
+    window.addEventListener('playlist-updated', handler);
+    return () => window.removeEventListener('playlist-updated', handler);
   }, [song?.id]);
 
   // 每次歌词行切换时也随机位置
@@ -122,7 +364,7 @@ const Playing: React.FC<PlayingProps> = ({
 
   // 解析歌词
   useEffect(() => {
-    if (song.lyrics) {
+    if (song.lyrics && song.lyrics.trim()) {
       const lines = song.lyrics.split('\n')
         .map(line => {
           const match = line.match(/^\[(\d+):(\d+)\.(\d+)\](.*)/);
@@ -138,7 +380,7 @@ const Playing: React.FC<PlayingProps> = ({
         .filter((item): item is { time: number, text: string } => item !== null && item.text !== '');
       setLyricsLines(lines);
     } else {
-      setLyricsLines([{ time: 0, text: '暂无歌词 / 纯音乐' }]);
+      setLyricsLines([]);
     }
   }, [song.id, song.lyrics]);
 
@@ -183,6 +425,7 @@ const Playing: React.FC<PlayingProps> = ({
   const currentDuration = viewMode === 'music' ? duration : videoState.duration;
 
   const unifiedTogglePlay = () => {
+    if (controlsLocked) return;
     if (viewMode === 'music') {
       if (videoState.isPlaying && videoRef.current) {
         videoRef.current.pause();
@@ -243,6 +486,7 @@ const Playing: React.FC<PlayingProps> = ({
     if (typeof res === 'boolean') setIsFavorite(res);
   };
 
+  const hasLyrics = lyricsLines.length > 0;
   const currentLine = useMemo(() => lyricsLines[activeLyricIndex], [lyricsLines, activeLyricIndex]);
   const nextLine = useMemo(() => lyricsLines[activeLyricIndex + 1], [lyricsLines, activeLyricIndex]);
   const VISUAL_LEAD_SECONDS = 0.8; // 提前一点点让颜色先动起来
@@ -262,11 +506,81 @@ const Playing: React.FC<PlayingProps> = ({
     pointerEvents: 'none' as const
   }), [activeLineProgress]);
 
+  const coverScrollRatio = useMemo(() => {
+    if (!currentLine) return 0;
+    const start = currentLine.time || 0;
+    const end = nextLine?.time ?? currentDuration ?? start + 1;
+    if (end <= start) return 0;
+    const raw = (currentProgress - start) / (end - start);
+    if (raw <= 0.5) return 0; // 前半不动
+    const t = Math.min(1, Math.max(0, (raw - 0.5) / 0.5));
+    // 缓出曲线，让滑动更平缓
+    const eased = 1 - Math.pow(1 - t, 3);
+    return eased;
+  }, [currentLine, nextLine, currentDuration, currentProgress]);
+
+  useEffect(() => {
+    const wrapper = coverTextWrapperRef.current;
+    const inner = coverTextInnerRef.current;
+    if (!inner) return;
+
+    // Reset first to avoid residual offset
+    inner.style.transform = 'translateX(0px)';
+
+    if (!wrapper || showLyrics || viewMode !== 'music' || !isActiveSlide) {
+      setCoverScrollDistance(0);
+      return;
+    }
+
+    const wrapperWidth = wrapper.clientWidth;
+    const innerWidth = inner.scrollWidth;
+    if (!wrapperWidth || innerWidth <= wrapperWidth + 4) {
+      setCoverScrollDistance(0);
+      return;
+    }
+    // Stop with 10px gap between text end and capsule edge
+    const distance = Math.max(0, innerWidth - wrapperWidth + 10);
+    setCoverScrollDistance(distance);
+  }, [showLyrics, viewMode, activeLyricIndex, song.id, currentLine?.text, isActiveSlide]);
+
+  const coverScrollOffset = useMemo(() => {
+    if (coverScrollDistance <= 0) return 0;
+    return coverScrollDistance * coverScrollRatio;
+  }, [coverScrollDistance, coverScrollRatio]);
+
+  useEffect(() => {
+    const inner = coverTextInnerRef.current;
+    if (!inner) return;
+
+    // Light smoothing while keeping in sync with time progress
+    inner.style.transition = coverScrollDistance > 0 ? 'transform 160ms linear' : 'none';
+    inner.style.willChange = coverScrollDistance > 0 ? 'transform' : 'auto';
+
+    const applyTransform = () => {
+      if (!inner) return;
+      inner.style.transform = `translate3d(-${coverScrollOffset}px, 0, 0)`;
+    };
+
+    if (coverScrollRafRef.current) cancelAnimationFrame(coverScrollRafRef.current);
+    coverScrollRafRef.current = requestAnimationFrame(applyTransform);
+
+    return () => {
+      if (coverScrollRafRef.current) cancelAnimationFrame(coverScrollRafRef.current);
+    };
+  }, [coverScrollDistance, coverScrollOffset, currentLine?.text]);
+
   const handleLandscapePlay = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const target = videoRef.current;
     if (!target) return;
+    landscapeRequestRef.current = { requestedAt: Date.now(), active: true };
+    setIsFullscreen(true); // 作为“横屏模式”开关，即便浏览器拒绝全屏也保持 UI
     try {
+      const native = getNative();
+      if (native?.control) {
+        native.control.setLandscape(true);
+        native.control.setFullscreen(true);
+      }
       if (target.requestFullscreen) {
         await target.requestFullscreen();
       } else if (target.parentElement?.requestFullscreen) {
@@ -279,16 +593,122 @@ const Playing: React.FC<PlayingProps> = ({
     } catch { }
   };
 
+  // ✅ 修复：增强退出全屏逻辑，确保恢复竖屏和非全屏状态
+  const exitFullscreen = async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    landscapeRequestRef.current = { requestedAt: 0, active: false };
+    
+    try {
+      // 1. 调用原生接口恢复竖屏和状态栏
+      const native = getNative();
+      if (native?.control) {
+        native.control.setLandscape(false);  // 关闭横屏锁定
+        native.control.setFullscreen(false); // 退出沉浸式全屏
+      }
+
+      // 2. 解锁屏幕方向（Web标准）
+      const orientation = (screen as any)?.orientation;
+      if (orientation?.unlock) {
+        try { orientation.unlock(); } catch { }
+      }
+
+      // 3. 退出浏览器全屏（Web标准）
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      console.warn("Exit fullscreen error:", err);
+    } finally {
+      setIsFullscreen(false);
+    }
+  };
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      const fs = !!document.fullscreenElement;
+      if (fs) {
+        setIsFullscreen(true);
+        landscapeRequestRef.current.active = true;
+        return;
+      }
+
+      // 某些设备会在请求全屏后立刻触发退出事件，这里做短暂容忍，避免“进入就退出”
+      const recentlyRequested = Date.now() - landscapeRequestRef.current.requestedAt < 800;
+      if (recentlyRequested && viewMode === 'video') {
+        setIsFullscreen(true);
+        return;
+      }
+
+      setIsFullscreen(false);
+      landscapeRequestRef.current = { requestedAt: 0, active: false };
+      if (viewMode === 'video') {
+        try {
+          const native = getNative();
+          // 确保退出时恢复设置
+          native?.control?.setLandscape(false);
+          native?.control?.setFullscreen(false);
+          const orientation = (screen as any)?.orientation;
+          orientation?.unlock?.();
+        } catch { }
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+  }, []);
+
+  useEffect(() => {
+    if (viewMode !== 'video' && isFullscreen) {
+      exitFullscreen();
+    }
+  }, [viewMode, isFullscreen]);
+
+  // 进度记忆：根据当前模式记录
+  useEffect(() => {
+    if (!song.id || !isActiveSlide) return;
+    const mem = progressMemoryRef.current[song.id] || {};
+    if (viewMode === 'music') {
+      mem.music = progress;
+    } else {
+      mem.video = videoState.currentTime;
+    }
+    progressMemoryRef.current[song.id] = mem;
+  }, [song.id, viewMode, progress, videoState.currentTime, isActiveSlide]);
+
+  // 在切换歌曲或模式时恢复对应进度
+  useEffect(() => {
+    if (!song.id || !isActiveSlide) return;
+    const mem = progressMemoryRef.current[song.id] || {};
+    if (viewMode === 'music') {
+      if (mem.music != null && Math.abs(mem.music - progress) > 1) {
+        onSeek(mem.music);
+      }
+    } else {
+      if (videoRef.current && mem.video != null) {
+        videoRef.current.currentTime = mem.video;
+        setVideoState(prev => ({ ...prev, currentTime: mem.video }));
+      } else if (videoRef.current && mem.video == null) {
+        videoRef.current.currentTime = 0;
+        setVideoState(prev => ({ ...prev, currentTime: 0 }));
+      }
+    }
+  }, [song.id, viewMode, isActiveSlide]);
+
   return (
-    <div className="relative w-full h-full flex flex-col bg-slate-950 text-white overflow-hidden">
+    <div className="relative w-full h-full flex flex-col bg-[#121212] text-white overflow-hidden">
       {/* 动态模糊背景 */}
       <div className="absolute inset-0 z-0">
         <img src={song.coverUrl} alt="bg" className="w-full h-full object-cover opacity-80 blur-3xl scale-125 transition-opacity duration-700" />
-        <div className="absolute inset-0 bg-black/40" />
+        <div className={`absolute inset-0 ${isImmersive ? 'bg-gradient-to-tr from-black/60 via-black/40 to-indigo-900/30' : 'bg-black/40'}`} />
+        {isImmersive && (
+          <div className="absolute inset-0 pointer-events-none mix-blend-screen opacity-40">
+            <div className="absolute w-64 h-64 bg-indigo-500/40 rounded-full blur-3xl -top-10 -left-10 animate-pulse" />
+            <div className="absolute w-72 h-72 bg-purple-500/30 rounded-full blur-3xl bottom-0 right-[-60px] animate-pulse" />
+          </div>
+        )}
       </div>
 
       {/* 顶部导航 */}
-      <div className="relative z-20 flex items-center justify-between px-4 py-4 mt-safe-top">
+      <div className={`relative z-20 flex items-center justify-between px-4 py-4 mt-safe-top ${isVideoFullscreen ? 'hidden' : ''}`}>
         <button onClick={onClose} className="p-2 text-slate-300 hover:text-white rounded-full transition-transform active:scale-95">
           <ChevronDown size={32} />
         </button>
@@ -312,7 +732,7 @@ const Playing: React.FC<PlayingProps> = ({
         </div>
 
         <button
-          onClick={() => setActionOpen(true)}
+          onClick={() => setShowPlaySettings(true)}
           className="p-2 text-slate-300 hover:text-white rounded-full transition-transform active:scale-110"
         >
           <MoreHorizontal size={24} />
@@ -324,30 +744,35 @@ const Playing: React.FC<PlayingProps> = ({
         {viewMode === 'music' ? (
           !showLyrics ? (
             <div className="w-full flex items-center justify-center animate-in zoom-in duration-500 px-6">
-              <div className="relative w-[70vw] h-[70vw] max-w-[380px] max-h-[380px] shadow-2xl rounded-2xl overflow-hidden">
+              <div className="relative w-[80vw] h-[80vw] max-w-[380px] max-h-[380px] shadow-2xl rounded-2xl overflow-hidden">
                 <img
                   src={song.coverUrl}
                   alt="cover"
                   className="w-full h-full object-cover rounded-2xl"
                 />
                 <div className="absolute inset-0 bg-gradient-to-tr from-black/25 to-transparent pointer-events-none rounded-2xl" />
-                <div
-                  className="absolute inset-x-4 flex justify-center"
-                  style={{ top: `${coverLyricPos * 100}%`, transform: 'translateY(-50%)' }}
-                >
-                  <div className="relative w-full max-w-[85%]">
-                    <span className="absolute -left-4 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-white animate-pulse" />
-                    <div className="relative inline-flex items-center px-4 py-1.5 rounded-2xl bg-black/45 backdrop-blur-sm overflow-hidden max-w-full">
-                      <span
-                        className="absolute left-0 top-0 h-full rounded-2xl bg-white/10 transition-all duration-100 ease-linear"
-                        style={{ width: `${activeLineProgress}%` }}
-                      />
-                      <span className="relative z-10 text-xs font-semibold text-white line-clamp-2 whitespace-nowrap">
-                        {lyricsLines[activeLyricIndex]?.text || '暂无歌词'}
-                      </span>
+                {hasLyrics && (
+                  <div
+                    className="absolute inset-x-4 flex justify-center"
+                    style={{ top: `${coverLyricPos * 100}%`, transform: 'translateY(-50%)' }}
+                  >
+                    <div className="relative w-full max-w-[90%]">
+                      <span className="absolute -left-4 top-1/2 -translate-y-1/2 w-2 h-2 rounded-full bg-white animate-pulse" />
+                      <div ref={coverTextWrapperRef} className="relative inline-flex items-center px-4 py-1.5 rounded-2xl bg-black/45 backdrop-blur-sm overflow-hidden max-w-full">
+                        <span
+                          className="absolute left-0 top-0 h-full rounded-2xl bg-white/10 transition-all duration-100 ease-linear"
+                          style={{ width: `${activeLineProgress}%` }}
+                        />
+                        <span
+                          ref={coverTextInnerRef}
+                          className="relative z-10 pr-3 text-sm font-semibold text-white whitespace-nowrap inline-block"
+                        >
+                          {lyricsLines[activeLyricIndex]?.text}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
           ) : (
@@ -356,33 +781,45 @@ const Playing: React.FC<PlayingProps> = ({
               onClick={(e) => e.stopPropagation()}
             >
               <div ref={lyricScrollRef} className="w-full space-y-8 py-[60%] transition-all">
-                {lyricsLines.map((line, i) => (
-                  <p key={i}
-                    className={`relative text-base leading-7 transition-all duration-300 cursor-pointer px-3 py-3 rounded-xl overflow-hidden w-full ${i === activeLyricIndex ? 'text-white text-2xl font-bold scale-105 bg-white/5' : 'text-white/40 hover:text-white/70'}`}
-                    onClick={(e) => { e.stopPropagation(); unifiedSeek(line.time); }}
-                  >
-                    {i === activeLyricIndex && (
-                      <span className="relative inline-block">
-                        <span
-                          className="absolute left-0 top-[-10%] h-[120%] rounded-full transition-all duration-100 ease-linear"
-                          style={activeLineBarStyle}
-                        />
-                        <span className="relative z-10">{line.text}</span>
-                      </span>
-                    )}
-                    {i !== activeLyricIndex && <span className="relative z-10">{line.text}</span>}
-                  </p>
-                ))}
+                {hasLyrics ? (
+                  lyricsLines.map((line, i) => (
+                    <p key={i}
+                      className={`relative text-base leading-7 transition-all duration-300 cursor-pointer px-3 py-3 rounded-xl overflow-hidden w-full ${i === activeLyricIndex ? 'text-white text-2xl font-bold scale-105 bg-white/5' : 'text-white/40 hover:text-white/70'}`}
+                      onClick={(e) => { e.stopPropagation(); unifiedSeek(line.time); }}
+                    >
+                      {i === activeLyricIndex && (
+                        <span className="relative inline-block">
+                          <span
+                            className="absolute left-0 right-2 top-[-10%] h-[120%] rounded-full transition-all duration-100 ease-linear"
+                            style={activeLineBarStyle}
+                          />
+                          <span className="relative z-10">{line.text}</span>
+                        </span>
+                      )}
+                      {i !== activeLyricIndex && <span className="relative z-10">{line.text}</span>}
+                    </p>
+                  ))
+                ) : (
+                  <p className="text-white/50 text-base font-medium py-6">暂无歌词/纯音乐</p>
+                )}
               </div>
             </div>
           )
         ) : (
-          <div className="w-full h-full flex items-center justify-center  backdrop-blur-sm shadow-2xl relative z-30">
+          <div className="w-full h-full flex items-center justify-center relative">
+            {isVideoFullscreen && (
+              <button
+                onClick={exitFullscreen}
+                className="absolute top-4 right-4 z-30 px-3 py-2 rounded-full bg-black/60 text-white text-xs font-bold border border-white/10 active:scale-95"
+              >
+                退出横屏
+              </button>
+            )}
             {song.mvUrl && isActiveSlide ? (
               <video
                 ref={videoRef}
                 src={song.mvUrl}
-                className="w-full max-h-full object-contain"
+                className={`w-full max-h-full object-contain ${isVideoFullscreen ? 'h-full' : ''}`}
                 playsInline
                 onPlay={handleVideoPlay}
                 onPause={handleVideoPause}
@@ -391,7 +828,7 @@ const Playing: React.FC<PlayingProps> = ({
                 autoPlay={isPlaying}
                 onEnded={() => setVideoState(prev => ({ ...prev, isPlaying: false }))}
                 controls={false}
-                poster=""
+                 poster="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
               />
             ) : (
               <div className="flex flex-col items-center text-white/50">
@@ -404,7 +841,7 @@ const Playing: React.FC<PlayingProps> = ({
       </div>
 
       {/* 底部控制区 */}
-      <div className="relative z-20 flex-none w-full pb-8 px-6 bg-gradient-to-t from-black via-black/60 to-transparent pt-6">
+      <div className={`relative z-20 flex-none w-full pb-8 px-6 bg-gradient-to-t from-black via-black/60 to-transparent pt-6 ${isVideoFullscreen ? 'hidden' : ''}`}>
         <div className="flex justify-between items-center mb-6">
           <div className="flex-1 mr-4 overflow-hidden cursor-pointer" onClick={toggleLyricsDisplay}>
             <div className="flex items-center gap-2">
@@ -426,7 +863,7 @@ const Playing: React.FC<PlayingProps> = ({
                 <Maximize2 size={24} />
               </button>
             )}
-            {/* ✅ 修复：下载按钮逻辑，根据 viewMode 决定下载音乐还是 MV */}
+            {/* ✅ 下载按钮逻辑，根据 viewMode 决定下载音乐还是 MV */}
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -488,7 +925,8 @@ const Playing: React.FC<PlayingProps> = ({
 
           <button
             onClick={unifiedTogglePlay}
-            className="w-16 h-16 bg-white text-black rounded-full flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all"
+            disabled={controlsLocked}
+            className="w-16 h-16 bg-white text-black rounded-full flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {currentIsPlaying ? <Pause size={32} fill="currentColor" /> : <Play size={32} fill="currentColor" className="ml-1" />}
           </button>
@@ -506,7 +944,7 @@ const Playing: React.FC<PlayingProps> = ({
       {showQueue && (
         <div className="absolute inset-0 bg-black/60 z-[100] flex flex-col justify-end swiper-no-swiping" onClick={() => setShowQueue(false)}>
           <div
-            className=" bg-slate-900 rounded-t-3xl p-6 max-h-[70vh] flex flex-col w-full shadow-2xl border-t border-white/5"
+            className=" bg-[#121212] rounded-t-3xl p-6 max-h-[70vh] flex flex-col w-full shadow-2xl border-t border-white/5"
             onClick={e => e.stopPropagation()}
           >
             <div className="flex justify-between items-center mb-4 pb-4 border-b border-white/5">
@@ -544,17 +982,32 @@ const Playing: React.FC<PlayingProps> = ({
         </div>
       )}
 
+      <PlaySettingsSheet
+        open={showPlaySettings}
+        onClose={() => setShowPlaySettings(false)}
+        settings={playSettings}
+        onToggle={togglePlaySetting}
+        onManualMatchMeta={handleManualMatchMeta}
+        onManualHiRes={handleManualHiRes}
+        onLayoutChange={handleLayoutChange}
+      />
+
       <SongActionSheet
         song={song}
         open={actionOpen}
         onClose={() => setActionOpen(false)}
-        onAddToFavorites={songActions.handleAddToFavorites}
+        onAddToFavorites={async (s) => {
+          const res = await songActions.handleAddToFavorites(s);
+          if (typeof res === 'boolean') setIsFavorite(res);
+          return res;
+        }}
         onAddToQueue={songActions.handleAddToQueue}
+        onAddToNext={songActions.handleAddToNext}
         onAddToPlaylist={songActions.handleAddToPlaylist}
         onCreatePlaylistAndAdd={songActions.handleCreatePlaylistAndAdd}
         onDownloadMusic={(s) => songActions.handleDownload(s, 'music')}
 
-        // ✅ 修复：在 Playing 页点击 MV，只需切换模式即可
+        // ✅ 在 Playing 页点击 MV，只需切换模式即可
         onPlayMv={() => setViewMode('video')}
       />
     </div>

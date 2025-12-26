@@ -9,9 +9,10 @@ interface DiscoverProps {
   onPlaySong: (song: Song) => void;
   currentSong: Song | null;
   onNavigateChart: (title: string, gradient: string, chartId: string) => void;
+  onAddToQueue: (song: Song) => void;
 }
 
-const Discover: React.FC<DiscoverProps> = ({ onPlaySong, currentSong, onNavigateChart }) => {
+const Discover: React.FC<DiscoverProps> = ({ onPlaySong, currentSong, onNavigateChart, onAddToQueue }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [history, setHistory] = useState<string[]>([]);
   const [songs, setSongs] = useState<Song[]>([]);
@@ -94,7 +95,7 @@ const Discover: React.FC<DiscoverProps> = ({ onPlaySong, currentSong, onNavigate
 
   return (
     <div className="h-full overflow-y-auto no-scrollbar pb-32">
-      <div className="sticky top-0 z-10 bg-[#0f172a]/95  backdrop-blur-md p-6 pb-4 border-b border-white/5">
+      <div className="sticky top-0 z-10 bg-[#121212]/95  backdrop-blur-md p-6 pb-4 border-b border-white/5">
         <h1 className="text-2xl font-bold text-white mb-4">发现</h1>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
@@ -104,7 +105,7 @@ const Discover: React.FC<DiscoverProps> = ({ onPlaySong, currentSong, onNavigate
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch(searchTerm)}
-            className="w-full bg-[#0f172a] text-white pl-10 pr-10 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder-slate-400"
+            className="w-full bg-[#121212] text-white pl-10 pr-10 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all placeholder-slate-400"
           />
 
           {/* 优化后的加载指示器 */}
@@ -139,6 +140,7 @@ const Discover: React.FC<DiscoverProps> = ({ onPlaySong, currentSong, onNavigate
                     index={idx}
                     song={song}
                     onClick={() => onPlaySong(song)}
+                    onAddToQueue={onAddToQueue}
                     isActive={currentSong?.id === song.id}
                   />
                 ))}
@@ -177,7 +179,7 @@ const Discover: React.FC<DiscoverProps> = ({ onPlaySong, currentSong, onNavigate
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {history.map(item => (
-                    <span key={item} onClick={() => handleSearch(item)} className="px-3 py-1 bg-[#0f172a]/80 rounded-full text-xs text-slate-300 cursor-pointer hover:bg-slate-700">{item}</span>
+                    <span key={item} onClick={() => handleSearch(item)} className="px-3 py-1 bg-[#121212]/80 rounded-full text-xs text-slate-300 cursor-pointer hover:bg-slate-700">{item}</span>
                   ))}
                 </div>
               </div>
@@ -188,7 +190,7 @@ const Discover: React.FC<DiscoverProps> = ({ onPlaySong, currentSong, onNavigate
               <h2 className="text-sm font-bold text-slate-400 flex items-center gap-2"><Flame size={14} /> 热门搜素</h2>
               <div className="flex flex-wrap gap-3 mt-3">
                 {['周杰伦', 'Taylor Swift', '陈奕迅', '林俊杰', '2024热歌'].map(tag => (
-                  <span key={tag} onClick={() => handleSearch(tag)} className="px-4 py-2 bg-[#0f172a]/80 rounded-full text-sm text-slate-300 cursor-pointer hover:bg-indigo-600 hover:text-white transition-all">{tag}</span>
+                  <span key={tag} onClick={() => handleSearch(tag)} className="px-4 py-2 bg-[#121212]/80 rounded-full text-sm text-slate-300 cursor-pointer hover:bg-indigo-600 hover:text-white transition-all">{tag}</span>
                 ))}
               </div>
             </div>

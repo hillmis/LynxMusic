@@ -14,8 +14,6 @@ import { Autoplay, Pagination } from 'swiper/modules';
 import 'swiper/css';
 import 'swiper/css/pagination';
 
-
-
 /* =========================
  * 样式常量
  * ========================= */
@@ -30,9 +28,27 @@ const CARD_STYLES = [
 ];
 
 const BANNERS = [
-  { id: 1, image: 'https://picsum.photos/seed/hm_banner_101/800/400', tag: '最新发布', title: '2024 夏日氛围感' },
-  { id: 2, image: 'https://picsum.photos/seed/hm_banner_102/800/400', tag: '独家首发', title: '爵士慵懒之夜' },
-  { id: 3, image: 'https://picsum.photos/seed/hm_banner_103/800/400', tag: '编辑精选', title: '赛博朋克：电子幻梦' }
+  {
+    id: 1,
+    image: 'https://s3.bmp.ovh/imgs/2025/12/22/955e5e627e249fa9.jpg',
+    tag: '官方频道',
+    title: '点击加入 LynxMusic 官方频道',
+    link: 'https://pd.qq.com/s/b7dkkep8x?b=9'
+  },
+  {
+    id: 2,
+    image: 'https://s3.bmp.ovh/imgs/2025/12/19/04e1ee0322afee7e.png',
+    tag: 'GitHub',
+    title: '点击访问 hillmis的GitHub首页',
+    link: 'https://github.com/hillmis'
+  },
+  {
+    id: 3,
+    image: 'https://s3.bmp.ovh/imgs/2025/07/23/b3d86fed8117d483.jpg',
+    tag: '编辑精选',
+    title: '用眼睛看，用心灵听',
+    link: 'https://link3.cc/liu13'
+  }
 ];
 
 /* =========================
@@ -57,14 +73,14 @@ const Home: React.FC<HomeProps> = ({
   onNavigatePlaylist,
   onNavigateSeeAllPlaylists
 }) => {
-  const [greeting, setGreeting] = useState('');
+  // 修改状态结构，分开存储 emoji 和 文本
+  const [greeting, setGreeting] = useState({ text: '', emoji: '' });
   const [recSongs, setRecSongs] = useState<Song[]>([]);
-   const [dailyPlaylist, setDailyPlaylist] = useState<Playlist | null>(null);
+  const [dailyPlaylist, setDailyPlaylist] = useState<Playlist | null>(null);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [loading, setLoading] = useState(false);
 
   const isMountedRef = useRef(true);
-  const loadingCoverSet = useRef<Set<string>>(new Set());
 
   /* =========================
    * 每日推荐（修复点）
@@ -80,9 +96,9 @@ const Home: React.FC<HomeProps> = ({
         const pl: Playlist = {
           id: 'daily_recommend',
           title: '每日推荐',
-          creator: 'HillMusic',
+          creator: 'LynxMusic',
           coverUrl: data[0]?.coverUrl || '',
-          songCount:30,
+          songCount: 30,
           songs: data,
           description: '每日自动生成的推荐歌单',
           apiKeyword: '热门',
@@ -118,7 +134,6 @@ const Home: React.FC<HomeProps> = ({
         if (Array.isArray(cache.data)) {
           cachedData = cache.data;
           applyCache(cache.data);
-          // 命中缓存也可以补全封面
           if (Date.now() - cache.ts < cacheTTL) {
             fillDetails(cache.data);
             return;
@@ -144,7 +159,6 @@ const Home: React.FC<HomeProps> = ({
       } catch { }
     } catch (e) {
       console.error('每日推荐加载失败', e);
-      // 失败时回退到缓存数据
       if (cachedData?.length) {
         applyCache(cachedData);
       }
@@ -153,7 +167,6 @@ const Home: React.FC<HomeProps> = ({
     }
   };
 
-  
 
   /* =========================
    * 初始化
@@ -163,16 +176,33 @@ const Home: React.FC<HomeProps> = ({
     isMountedRef.current = true;
 
     const hour = new Date().getHours();
-    if (hour < 6) setGreeting('夜深了~');
-    else if (hour < 11) setGreeting('早上好！');
-    else if (hour < 14) setGreeting('中午好！');
-    else if (hour < 18) setGreeting('下午好！');
-    else setGreeting('晚上好！');
+    let text = '';
+    let emoji = '';
+
+    // 修复了原本逻辑顺序问题，并分离了 Emoji
+    if (hour < 6) {
+      emoji = '🌙'; 
+      text = '夜深了~';
+    } else if (hour < 11) { 
+      emoji = '☀️'; 
+      text = '早上好！';
+    } else if (hour < 13) { 
+      emoji = '🌞'; 
+      text = '中午好！';
+    } else if (hour < 18) { 
+      emoji = '🌇'; 
+      text = '下午好！';
+    } else { 
+      emoji = '✨'; 
+      text = '晚上好！';
+    }
+    
+    setGreeting({ text, emoji });
 
     const initPlaylists: Playlist[] = DYNAMIC_PLAYLIST_CONFIG.map(item => ({
       id: `dp_${item.id}`,
       title: item.name,
-      creator: 'HillMusic',
+      creator: 'LynxMusic',
       coverUrl: '',
       coverImgStack: [],
       songCount: 50,
@@ -182,8 +212,6 @@ const Home: React.FC<HomeProps> = ({
 
     setPlaylists(initPlaylists);
 
-
-    // ✅ 关键：加载每日推荐（首屏/刷新触发一次，之后命中缓存）
     loadDailyRecommend();
 
     return () => {
@@ -195,19 +223,33 @@ const Home: React.FC<HomeProps> = ({
    * UI
    * ========================= */
 
+  const openBannerLink = (link?: string) => {
+    if (!link) return;
+    const url = link.startsWith('http') ? link : `https://${link}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
   return (
-    <div className="h-full overflow-y-auto no-scrollbar pb-32 bg-[#0f172a] transition-colors">
+    <div className="h-full overflow-y-auto no-scrollbar pb-32 bg-[#121212] transition-colors">
       {/* Header */}
       <div className="p-6 pt-8 flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-purple-400">
-            {greeting}
+          {/* 修改后的标题结构：使用 flex 布局，将 Emoji 和 渐变文字分开 */}
+          <h1 className="text-2xl font-black flex items-center gap-2">
+            {/* Emoji 部分：保持原色，不加 transparent */}
+            <span className="text-2xl filter drop-shadow-sm">
+              {greeting.emoji}
+            </span>
+            {/* 文字部分：应用渐变色 */}
+            <span className="bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-purple-400">
+              {greeting.text}
+            </span>
           </h1>
-          <p className="text-slate-400 text-sm">HillMusic 祝您天天开心</p>
+          <p className="text-slate-400 text-sm mt-1">LynxMusic 祝您天天开心</p>
         </div>
         <button
           onClick={onNavigateCheckIn}
-          className="p-2.5 bg-[#0f172a] rounded-full text-slate-400 border border-white/5 shadow-sm">
+          className="p-2.5 bg-[#121212] rounded-full text-slate-400 border border-white/5 shadow-sm">
           <Calendar size={24} />
         </button>
       </div>
@@ -215,27 +257,30 @@ const Home: React.FC<HomeProps> = ({
       {/* Banner */}
       <div className="px-6 mb-6 relative h-40">
         <Swiper
-  modules={[Autoplay, Pagination]}
-  slidesPerView={1}
-  loop
-  autoplay={{ delay: 4000, disableOnInteraction: false }}
-  pagination={{ 
-    clickable: true,
-    renderBullet: function (index, className) {
-      return `<span class="${className}" style="background-color: ${index ? '#9CA3AF' : 'rgba(255,255,255,0.5)'}; width: 5px; height: 5px; margin: 0 4px;"></span>`;
-    }
-  }}
-  className="w-full h-full rounded-2xl"
->
+          modules={[Autoplay, Pagination]}
+          slidesPerView={1}
+          loop
+          autoplay={{ delay: 4000, disableOnInteraction: false }}
+          pagination={{
+            clickable: true,
+            renderBullet: function (index, className) {
+              return `<span class="${className}" style="background-color: ${index ? '#9CA3AF' : 'rgba(255,255,255,0.5)'}; width: 5px; height: 5px; margin: 0 4px;"></span>`;
+            }
+          }}
+          className="w-full h-full rounded-2xl"
+        >
           {BANNERS.map(banner => (
             <SwiperSlide key={banner.id}>
-              <div className="relative w-full h-full">
+              <div
+                className="relative w-full h-full cursor-pointer"
+                onClick={() => openBannerLink(banner.link || banner.image)}
+              >
                 <img src={banner.image} className="w-full h-full object-cover" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent p-4 flex flex-col justify-end">
-                  <span className="text-[10px] font-bold text-indigo-400 mb-1">
+                  <span className="text-[10px] font-bold text-indigo-400">
                     {banner.tag}
                   </span>
-                  <h2 className="text-lg font-bold text-white">
+                  <h2 className="text-[15px] font-bold text-white mb-2">
                     {banner.title}
                   </h2>
                 </div>
@@ -270,7 +315,7 @@ const Home: React.FC<HomeProps> = ({
                 onClick={() => onPlaySong(song)}
                 className="w-28 flex-shrink-0 cursor-pointer"
               >
-                <div className="relative w-28 h-28 mb-1.5 rounded-lg overflow-hidden shadow-md bg-[#0f172a]">
+                <div className="relative w-28 h-28 mb-1.5 rounded-lg overflow-hidden shadow-md bg-[#121212]">
                   <img src={song.coverUrl} className="w-full h-full object-cover" />
                   <div className="absolute inset-0 bg-black/40 opacity-0 hover:opacity-100 flex items-center justify-center">
                     <Play className="text-white fill-white" />
@@ -298,7 +343,7 @@ const Home: React.FC<HomeProps> = ({
                 onClick={() => onNavigatePlaylist(playlist)}
                 className={`relative h-24 ${bg} rounded-2xl p-2.5 overflow-hidden cursor-pointer border border-white/10 shadow-[0_8px_24px_rgba(0,0,0,0.25)]`}
               >
-                  <div className="absolute inset-0 bg-white/10 backdrop-blur-[6px] border border-white/10" />
+                <div className="absolute inset-0 bg-white/10 backdrop-blur-[6px] border border-white/10" />
                 <div className="relative z-10 pr-8 space-y-1.5">
                   <h3 className="text-sm font-bold text-white line-clamp-2 leading-relaxed">
                     {playlist.title}
@@ -317,7 +362,7 @@ const Home: React.FC<HomeProps> = ({
 
         <button
           onClick={onNavigateSeeAllPlaylists}
-          className="w-full mt-4 py-3 rounded-xl bg-[#0f172a] text-slate-300 font-bold text-sm shadow-sm border border-white/5 flex items-center justify-center gap-2"
+          className="w-full mt-4 py-3 rounded-xl bg-[#121212] text-slate-300 font-bold text-sm shadow-sm border border-white/5 flex items-center justify-center gap-2"
         >
           <Grid size={16} /> 更多歌单 <ChevronRight size={14} />
         </button>
@@ -327,4 +372,3 @@ const Home: React.FC<HomeProps> = ({
 };
 
 export default Home;
-
