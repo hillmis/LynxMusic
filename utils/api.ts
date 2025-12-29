@@ -1,8 +1,8 @@
 ﻿import { Song, Playlist } from '../types';
 
 // --- 配置与常量 ---
-const DEFAULT_API_HOST = 'https://sdkapi.hhlqilongzhu.cn/api';
-const DEFAULT_API_KEY = 'Dragon652C2277C78812D1B1ED2C5D087D9053';
+const DEFAULT_API_HOST = '';//例子：https://sdkapi.hhlqilongzhu.cn/api
+const DEFAULT_API_KEY = '';
 const PROXY_POOL = [
     (url: string) => `https://bird.ioliu.cn/v1/?url=${encodeURIComponent(url)}`,               // 国内可直连
     (url: string) => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`,    // 稳定免费
