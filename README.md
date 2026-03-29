@@ -31,7 +31,7 @@ LynxMusic 是一个基于 React + TypeScript + Vite 的开源本地/在线音乐
 1. 克隆仓库
 
 ```bash
-git clone <仓库地址>
+git clone https://github.com/hillmis/LynxMusic.git
 cd Lynxmusic
 ```
 
