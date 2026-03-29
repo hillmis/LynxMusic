@@ -260,6 +260,7 @@ export type SubView =
   | { type: 'SEE_ALL_PLAYLISTS' }
   | { type: 'CHART_DETAIL'; title: string; gradient: string; chartId: string }
   | { type: 'SETTINGS' }
+  | { type: 'API_CONFIG' }
   | { type: 'STATISTIC_DETAIL' }
   | { type: 'RECENT' }
   | { type: 'DOWNLOADS' };

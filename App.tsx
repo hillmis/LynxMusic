@@ -13,6 +13,7 @@ import SeeAllSongs from './pages/SeeAllSongs';
 import SeeAllPlaylists from './pages/SeeAllPlaylists';
 import ChartDetail from './pages/ChartDetail';
 import Settings from './pages/Settings';
+import ApiConfig from './pages/ApiConfig';
 import StatisticDetail from './pages/StatisticDetail';
 import Recent from './pages/Recent';
 import DownloadManager from './pages/DownloadManager';
@@ -20,6 +21,7 @@ import { getNative, safeToast } from './utils/fileSystem';
 import { restoreFromLatestBackup, startAutoBackup } from './utils/autoBackup';
 import SplashScreen from './components/SplashScreen';
 import { initBackupScheduler } from './utils/db';
+import { getCurrentApiTypeConfig, setCustomApiTypeConfig } from './utils/api';
 
 const DESKTOP_BREAKPOINT = 768;
 const MIN_PANE_RATIO = 0.32;
@@ -209,6 +211,21 @@ const App: React.FC = () => {
 
     initApp();
   }, []);
+
+  // 自动设置 API 配置并检测是否已导入
+  useEffect(() => {
+    if (appReady) {
+      try {
+        // 自动设置 API 配置
+        setCustomApiTypeConfig(API_TYPE_CONFIG);
+        // 尝试获取当前 API 配置，确认配置已加载
+        getCurrentApiTypeConfig();
+      } catch (error) {
+        // 如果配置加载失败，提醒用户在设置中导入
+        safeToast('API 配置未检测到，请在设置中导入配置');
+      }
+    }
+  }, [appReady]);
 
   // Auto Backup & Restore Logic
   useEffect(() => {
@@ -550,6 +567,12 @@ const App: React.FC = () => {
           onRequestOverlayPermission={ensureOverlayPermission}
           onCheckUpdate={handleCheckUpdate}
           onOpenSponsor={handleOpenSponsor}
+          onNavigateApiConfig={() => setSubView({ type: 'API_CONFIG' })}
+        />
+      );
+      case 'API_CONFIG': return (
+        <ApiConfig
+          onBack={() => setSubView({ type: 'SETTINGS' })}
         />
       );
       case 'RECENT': return <Recent {...commonProps} onPlaySong={player.playSong} onAddToQueue={player.addToQueue} />;

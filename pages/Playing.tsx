@@ -10,7 +10,7 @@ import 'swiper/css';
 import { useSongActions } from '../hooks/useSongActions';
 import SongActionSheet from '../components/SongActionSheet';
 import PlaySettingsSheet from '../components/PlaySettingsSheet';
-import { fetchMusicVideo, searchMusic, fetchSongDetail } from '../utils/api';
+import { fetchMusicVideo, searchMusic, fetchSongDetail, fetchRaw } from '../utils/api';
 import { isSongInFavorites } from '../utils/playlistStore';
 import { safeToast, getNative, saveDownloadedMedia, saveTextFile } from '../utils/fileSystem';
 import { dbSaveLocalSong, dbGetLocalSongs} from '../utils/db';
@@ -213,14 +213,14 @@ const Playing: React.FC<PlayingProps> = ({
          if ((song.source === 'local' || song.path) && song.title) {
             try {
                 safeToast('正在下载高清封面...');
-                const resp = await fetch(detail.coverUrl);
+                const resp = await fetchRaw(detail.coverUrl, { timeout: 30000 });
                 const blob = await resp.blob();
                 const base64 = await new Promise<string>((resolve) => {
                     const reader = new FileReader();
                     reader.onloadend = () => resolve(reader.result as string);
                     reader.readAsDataURL(blob);
                 });
-                
+
                 const picName = `${song.title}-${song.artist}.jpg`;
                 const picPath = saveDownloadedMedia(picName, base64, 'picture');
                 

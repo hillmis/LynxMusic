@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { importFullData, clearDatabase, createFullBackup } from '../utils/db';
 import { getBackupList, readBackupFile, initFileSystem, PATHS, safeToast } from '../utils/fileSystem';
-import { testApiConnection } from '../utils/api';
+import { fetchJson, testApiConnection, configureApi } from '../utils/api';
 import { getNative } from '../utils/nativeBridge';
 
 interface SettingsProps {
@@ -19,6 +19,7 @@ interface SettingsProps {
     onRequestOverlayPermission?: () => void;
     onCheckUpdate: () => void;
     onOpenSponsor: () => void;
+    onNavigateApiConfig: () => void;
 }
 
 type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error';
@@ -33,7 +34,8 @@ const Settings: React.FC<SettingsProps> = ({
     onToggleOverlay,
     onRequestOverlayPermission,
     onCheckUpdate,
-    onOpenSponsor
+    onOpenSponsor,
+    onNavigateApiConfig
 }) => {
     const [backups, setBackups] = useState<string[]>([]);
     const [loading, setLoading] = useState(false);
@@ -42,10 +44,6 @@ const Settings: React.FC<SettingsProps> = ({
     // 全屏状态
     const [isFullscreen, setIsFullscreen] = useState(false);
 
-    // API Config State
-    const [apiHost, setApiHost] = useState('');
-    const [apiKey, setApiKey] = useState('');
-    const [connStatus, setConnStatus] = useState<ConnectionStatus>('idle');
     const overlayAvailable = overlaySupported !== false;
 
     useEffect(() => {
@@ -55,15 +53,6 @@ const Settings: React.FC<SettingsProps> = ({
         // 加载全屏设置
         const savedFullscreen = localStorage.getItem(SETTING_FULLSCREEN_KEY) === 'true';
         setIsFullscreen(savedFullscreen);
-
-        const savedHost = localStorage.getItem('setting_api_host') || '';
-        const savedKey = localStorage.getItem('setting_api_key') || '';
-        setApiHost(savedHost);
-        setApiKey(savedKey);
-
-        if (savedHost && savedKey) {
-            setConnStatus('idle');
-        }
 
         const fetchVersion = () => {
             const sys = (window as any).DxxSystem;
@@ -125,35 +114,6 @@ const Settings: React.FC<SettingsProps> = ({
         : overlayPermission
             ? '已授权'
             : '需要授权';
-
-   // --- API Config Handlers ---
-    const handleSaveConfig = async () => {
-        const host = apiHost.trim();
-        const key = apiKey.trim();
-
-        if (!host || !key) {
-            safeToast('请填写完整配置');
-            return;
-        }
-
-        setConnStatus('testing');
-
-        localStorage.setItem('setting_api_host', host);
-        localStorage.setItem('setting_api_key', key);
-
-        const isConnected = await testApiConnection(host, key);
-
-        if (isConnected) {
-            setConnStatus('success');
-            safeToast('配置保存成功，应用即将重启...');
-            setTimeout(() => {
-                window.location.reload();
-            }, 1500);
-        } else {
-            setConnStatus('error');
-            safeToast('配置已保存，但连接测试失败，请检查');
-        }
-    };
 
     // --- Backup Handlers ---
     const handleCreateBackup = async () => {
@@ -280,72 +240,23 @@ const Settings: React.FC<SettingsProps> = ({
                     </div>
                 </section>
 
-                {/* 1. 音源配置 (核心功能) */}
+                {/* 1. 接口配置子页面入口 */}
                 <section>
-                   {/* ... 音源配置内容保持不变 ... */}
-                   <div className="flex justify-between items-center mb-4">
+                    <div className="flex justify-between items-center mb-4">
                         <h2 className="text-slate-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2">
-                            <Server size={14} /> 音源配置
+                            <Server size={14} /> 接口配置入口
                         </h2>
-                        {connStatus === 'success' && <span className="text-[10px] text-green-400 flex items-center gap-1"><CheckCircle2 size={12} /> 连接正常</span>}
-                        {connStatus === 'error' && <span className="text-[10px] text-red-400 flex items-center gap-1"><XCircle size={12} /> 连接失败</span>}
-                        {connStatus === 'testing' && <span className="text-[10px] text-indigo-400 flex items-center gap-1"><RefreshCw size={12} className="animate-spin" /> 测试中...</span>}
                     </div>
 
-                    <div className={`bg-[#121212] rounded-2xl p-5 border transition-colors space-y-4 shadow-lg ${connStatus === 'error' ? 'border-red-500/30' : connStatus === 'success' ? 'border-green-500/30' : 'border-white/5'}`}>
-                        {(!apiHost || !apiKey) && (
-                            <div className="bg-yellow-500/10 border border-yellow-500/20 p-3 rounded-xl flex items-start gap-3 mb-2">
-                                <AlertTriangle className="text-yellow-500 shrink-0" size={18} />
-                                <p className="text-xs text-yellow-200/80 leading-relaxed">
-                                    应用未配置音源接口，无法搜索或播放在线音乐。请填写有效的 API Host 和 Key。
-                                </p>
-                            </div>
-                        )}
-
-                        {connStatus === 'error' && (
-                            <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-xl flex items-start gap-3 mb-2">
-                                <Wifi className="text-red-500 shrink-0" size={18} />
-                                <p className="text-xs text-red-200/80 leading-relaxed">
-                                    连接失败。请检查：<br />1. 网络是否正常<br />2. API Host 地址是否正确 (需包含 http/https)<br />3. API Key 是否有效
-                                </p>
-                            </div>
-                        )}
-
-                        <div>
-                            <label className="text-xs text-slate-400 block mb-1.5 ml-1">API Host (接口地址)</label>
-                            <input
-                                value={apiHost}
-                                onChange={(e) => {
-                                    setApiHost(e.target.value);
-                                    if (connStatus !== 'idle') setConnStatus('idle');
-                                }}
-                                placeholder="https://api.example.com"
-                                className="w-full bg-[#121212] text-white px-4 py-3 rounded-xl text-sm outline-none border border-white/5 focus:border-indigo-500 transition-colors placeholder:text-slate-600"
-                            />
-                        </div>
-                        <div>
-                            <label className="text-xs text-slate-400 block mb-1.5 ml-1">API Key (密钥)</label>
-                            <input
-                                value={apiKey}
-                                onChange={(e) => {
-                                    setApiKey(e.target.value);
-                                    if (connStatus !== 'idle') setConnStatus('idle');
-                                }}
-                                placeholder="输入 API Key"
-                                type="password"
-                                className="w-full bg-[#121212] text-white px-4 py-3 rounded-xl text-sm outline-none border border-white/5 focus:border-indigo-500 transition-colors placeholder:text-slate-600"
-                            />
-                        </div>
+                    <div className="bg-[#121212] rounded-2xl p-5 border border-white/5 shadow-lg">
+                        <p className="text-slate-400 text-xs mb-3">
+                            原音源配置已拆分到独立页面，便于定位和调试。点击下方进入接口配置。
+                        </p>
                         <button
-                            onClick={handleSaveConfig}
-                            disabled={connStatus === 'testing'}
-                            className={`w-full py-3 text-white font-bold rounded-xl text-sm flex items-center justify-center gap-2 transition-all active:scale-[0.98] shadow-lg ${connStatus === 'success' ? 'bg-green-600 hover:bg-green-500 shadow-green-900/20' :
-                                connStatus === 'error' ? 'bg-red-600 hover:bg-red-500 shadow-red-900/20' :
-                                    'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-900/20'
-                                } disabled:opacity-50 disabled:cursor-not-allowed`}
+                            onClick={onNavigateApiConfig}
+                            className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm transition-all active:scale-[0.98]"
                         >
-                            {connStatus === 'testing' ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
-                            {connStatus === 'testing' ? '正在连接...' : connStatus === 'success' ? '保存并测试成功' : '保存并测试连接'}
+                            前往接口配置
                         </button>
                     </div>
                 </section>

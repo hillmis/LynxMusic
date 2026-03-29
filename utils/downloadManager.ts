@@ -1,5 +1,6 @@
 import { DownloadTask, DownloadType } from '../types';
 import { blobToBase64, getNative, saveDownloadedMedia, safeToast } from './fileSystem';
+import { fetchRaw } from './api';
 
 const STORAGE_KEY = 'hm_download_tasks_v1';
 const CONFIG_KEY = 'hm_download_config_v1';
@@ -195,7 +196,7 @@ const performRemoteDownload = async (
     onProgress: (p: number) => void
 ): Promise<string> => {
     const url = task.url!;
-    const res = await fetch(url, { signal: controller.signal });
+    const res = await fetchRaw(url, { signal: controller.signal, timeout: 60000 });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const total = Number(res.headers.get('content-length') || 0);
     const disposition = res.headers.get('content-disposition') || '';

@@ -1,3 +1,5 @@
+import { fetchJson } from './api';
+
 const STORAGE_KEYS = {
   points: 'hm_points_balance_v2',
   downloadChances: 'hm_download_chances_v1',
@@ -88,10 +90,9 @@ const parseRemoteCodes = (raw: any): string[] => {
 export const fetchRemotePrivilegeCodes = async (): Promise<string[]> => {
   for (const base of REMOTE_KEY_SOURCES) {
     try {
-      const resp = await fetch(`${base}?t=${Date.now()}`, { mode: 'cors', redirect: 'follow' });
+      const data = await fetchJson(`${base}?t=${Date.now()}`, { mode: 'cors', redirect: 'follow', useFastFetch: false });
       // 某些镜像会返回 opaque，无 CORS 头，直接跳过
-      if (!resp.ok || resp.type === 'opaque') continue;
-      const data = await resp.json();
+      if (!data) continue;
       const parsed = parseRemoteCodes(data);
       if (parsed.length) return parsed;
     } catch {

@@ -11,7 +11,7 @@ import { dbGetLocalSongs, dbSaveLocalSong, dbClearLocalSongs, dbDeleteLocalSong 
 import { useSongActions } from '../hooks/useSongActions';
 import SongActionSheet from '../components/SongActionSheet';
 import { getNative, safeToast, PATHS, saveTextFile, saveDownloadedMedia } from '../utils/fileSystem';
-import { fetchSongDetail, searchMusic } from '../utils/api';
+import { fetchSongDetail, searchMusic, fetchRaw, fetchLyrics, fetchCover } from '../utils/api';
 
 // --- 类型声明 ---
 type SourceType = 'download' | 'qq' | 'wy' | 'kw' | 'kg' | 'lynx' | 'local' | string;
@@ -837,35 +837,34 @@ const Local: React.FC<LocalProps> = ({ onPlaySong, onPlayList, onAddToQueue, onA
       if (hasLocalLrc && hasLocalCover) continue;
 
       try {
-        // 1. 联网搜索匹配
-        // 注意：这里使用 searchMusic + fetchSongDetail 组合
-        // 为了准确率，可以先用 song.title + song.artist 搜，取第一个
+        // 1. 使用独立的接口获取歌词和封面
         const keywords = `${song.title} ${song.artist}`.trim();
-        const searchResults = await searchMusic(keywords);
+        let newItem = { ...song };
+        let isUpdated = false;
 
-        if (searchResults && searchResults.length > 0) {
-          const bestMatch = searchResults[0];
-          const detail = await fetchSongDetail(bestMatch);
-
-          let newItem = { ...song };
-          let isUpdated = false;
-
-          // 2. 保存歌词
-          if (detail.lyrics && (!song.lyrics || song.lyrics.length < 10)) {
-            const lrcName = `${song.title}-${song.artist}.lrc`;
-            const lrcPath = saveTextFile(lrcName, detail.lyrics, 'lrcs');
-            if (lrcPath) {
-              newItem.lyrics = `file://${lrcPath}`; // 存入数据库的是文件路径
-              isUpdated = true;
+        // 2. 获取歌词
+        if (!hasLocalLrc) {
+          try {
+            const lyrics = await fetchLyrics(keywords);
+            if (lyrics && lyrics.length > 10) {
+              const lrcName = `${song.title}-${song.artist}.lrc`;
+              const lrcPath = saveTextFile(lrcName, lyrics, 'lrcs');
+              if (lrcPath) {
+                newItem.lyrics = `file://${lrcPath}`;
+                isUpdated = true;
+              }
             }
+          } catch (e) {
+            console.warn('Lyrics fetch failed', e);
           }
+        }
 
-          // 3. 保存封面
-          if (detail.coverUrl && (!song.coverUrl || song.coverUrl.includes('unsplash'))) {
-            // 下载封面图片并保存
-            try {
-              // 需要一个将网络图片转Base64的辅助函数，或者 fetch blob
-              const resp = await fetch(detail.coverUrl);
+        // 3. 获取封面
+        if (!hasLocalCover) {
+          try {
+            const coverUrl = await fetchCover(keywords);
+            if (coverUrl && (!song.coverUrl || song.coverUrl.includes('unsplash'))) {
+              const resp = await fetchRaw(coverUrl, { timeout: 30000 });
               const blob = await resp.blob();
               const base64 = await new Promise<string>((resolve) => {
                 const reader = new FileReader();
@@ -880,16 +879,16 @@ const Local: React.FC<LocalProps> = ({ onPlaySong, onPlayList, onAddToQueue, onA
                 newItem.coverUrl = `file://${picPath}`;
                 isUpdated = true;
               }
-            } catch (e) {
-              console.warn('Cover download failed', e);
             }
+          } catch (e) {
+            console.warn('Cover fetch failed', e);
           }
+        }
 
-          // 4. 更新数据库
-          if (isUpdated) {
-            await dbSaveLocalSong(newItem);
-            updatedCount++;
-          }
+        // 4. 更新数据库
+        if (isUpdated) {
+          await dbSaveLocalSong(newItem);
+          updatedCount++;
         }
       } catch (e) {
         console.warn(`Match failed for ${song.title}`, e);

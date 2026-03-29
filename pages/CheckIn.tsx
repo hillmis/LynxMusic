@@ -4,6 +4,7 @@ import { ArrowLeft, Calendar, CheckCircle2, Gift, Coins, Zap, Loader2, Download,
 import { safeToast } from '../utils/fileSystem';
 import { getListenRecords } from '../utils/db';
 import { getNative } from '../utils/nativeBridge';
+import { fetchJson } from '../utils/api';
 import { DOWNLOAD_COST, REWARD_EVENTS, addPointsBalance, getDownloadChances, getPointsBalance, hasDownloadPrivilege, redeemDownloadChance, unlockDownloadPrivilege } from '../utils/rewards';
 
 interface CheckInProps {
@@ -211,9 +212,7 @@ const CheckIn: React.FC<CheckInProps> = ({ onBack }) => {
         const tryFetchList = async () => {
           for (const base of TASK_SOURCE_URLS) {
             try {
-              const resp = await fetch(`${base}?t=${Date.now()}`, { mode: 'cors' });
-              if (!resp.ok) continue;
-              const json = await resp.json();
+              const json = await fetchJson(`${base}?t=${Date.now()}`, { mode: 'cors', redirect: 'follow', useFastFetch: false });
               if (json) return json;
             } catch {
               continue;
