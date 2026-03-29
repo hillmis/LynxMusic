@@ -169,16 +169,16 @@ const Settings: React.FC<SettingsProps> = ({
                 <h1 className="text-lg font-bold text-white">设置</h1>
             </div>
 
-            <div className="p-6 space-y-8">
+            <div className="p-6 space-y-6">
                 {/* 0. 显示设置 (新功能) */}
                 <section>
-                    <div className="flex justify-between items-center mb-4">
+                    <div className="flex justify-between items-center mb-3">
                         <h2 className="text-slate-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2">
                             <Monitor size={14} /> 显示设置
                         </h2>
                     </div>
 
-                    <div className="bg-[#121212] rounded-2xl p-5 border border-white/5 shadow-lg flex items-center gap-4">
+                    <div className="bg-[#1a1a1a] rounded-2xl p-5 border border-white/5 shadow-lg flex items-center gap-4 transition-all hover:shadow-xl hover:border-white/10">
                         <div className="p-3 bg-blue-500/10 rounded-2xl text-blue-400 shrink-0">
                             <Maximize size={22} />
                         </div>
@@ -199,16 +199,18 @@ const Settings: React.FC<SettingsProps> = ({
                     </div>
                 </section>
 
-                {/* 0.5 悬浮窗开关 */}
+                {/* 悬浮窗开关 */}
                 <section>
-                    <div className="flex justify-between items-center mb-4">
+                    <div className="flex justify-between items-center mb-3">
                         <h2 className="text-slate-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2">
                             <PanelsTopLeft size={14} /> 系统悬浮窗（实验）
                         </h2>
-                        <span className="text-[10px] text-slate-400">{overlayStatus}</span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full ${!overlayAvailable ? 'bg-slate-700 text-slate-300' : overlayPermission ? 'bg-green-500/20 text-green-400' : 'bg-amber-500/20 text-amber-400'}`}>
+                            {overlayStatus}
+                        </span>
                     </div>
 
-                    <div className="bg-[#121212] rounded-2xl p-5 border border-white/5 shadow-lg flex items-start gap-4">
+                    <div className="bg-[#1a1a1a] rounded-2xl p-5 border border-white/5 shadow-lg flex items-start gap-4 transition-all hover:shadow-xl hover:border-white/10">
                         <div className="p-3 bg-indigo-500/10 rounded-2xl text-indigo-400 shrink-0">
                             <Smartphone size={22} />
                         </div>
@@ -240,43 +242,45 @@ const Settings: React.FC<SettingsProps> = ({
                     </div>
                 </section>
 
-                {/* 1. 接口配置子页面入口 */}
+                {/* 接口配置 */}
                 <section>
-                    <div className="flex justify-between items-center mb-4">
+                    <div className="flex justify-between items-center mb-3">
                         <h2 className="text-slate-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2">
-                            <Server size={14} /> 接口配置入口
+                            <Server size={14} /> 接口配置
                         </h2>
                     </div>
 
-                    <div className="bg-[#121212] rounded-2xl p-5 border border-white/5 shadow-lg">
-                        <p className="text-slate-400 text-xs mb-3">
+                    <div className="bg-[#1a1a1a] rounded-2xl p-5 border border-white/5 shadow-lg transition-all hover:shadow-xl hover:border-white/10">
+                        <p className="text-slate-400 text-xs mb-4">
                             原音源配置已拆分到独立页面，便于定位和调试。点击下方进入接口配置。
                         </p>
                         <button
                             onClick={onNavigateApiConfig}
-                            className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm transition-all active:scale-[0.98]"
+                            className="w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-sm transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                         >
                             前往接口配置
+                            <ArrowRight size={16} />
                         </button>
                     </div>
                 </section>
 
-                {/* 2. 存储与备份 */}
+                {/* 存储与备份 */}
                 <section>
-                    <div className="flex justify-between items-end mb-4">
+                    <div className="flex justify-between items-center mb-3">
                         <h2 className="text-slate-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2">
                             <HardDrive size={14} /> 数据备份与恢复
                         </h2>
                         <button
                             onClick={handleCreateBackup}
                             disabled={loading}
-                            className="text-xs bg-[#121212] text-indigo-400 border border-indigo-500/20 px-1 rounded-full font-bold hover:bg-indigo-500 hover:text-white transition-all flex items-center gap-1.5 disabled:opacity-50 active:scale-95"
+                            className="text-xs bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-3 py-1 rounded-full font-bold hover:bg-indigo-500 hover:text-white transition-all flex items-center gap-1.5 disabled:opacity-50 active:scale-95"
                         >
-                            <Upload size={12} /> 新建备份
+                            <Upload size={12} />
+                            新建备份
                         </button>
                     </div>
-                    {/* ... 备份列表内容保持不变 ... */}
-                    <div className="bg-[#121212] rounded-2xl overflow-hidden border border-white/5 shadow-lg">
+                    
+                    <div className="bg-[#1a1a1a] rounded-2xl overflow-hidden border border-white/5 shadow-lg transition-all hover:shadow-xl hover:border-white/10">
                         {backups.length === 0 ? (
                             <div className="p-8 text-center text-slate-500">
                                 <Smartphone size={32} className="mx-auto mb-2 opacity-30" />
@@ -319,13 +323,12 @@ const Settings: React.FC<SettingsProps> = ({
                     </div>
                 </section>
 
-                {/* ... 其他部分保持不变 ... */}
-                {/* 3. 软件信息 (新增) */}
+                {/* 关于 */}
                 <section>
-                    <h2 className="text-slate-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2 mb-4">
+                    <h2 className="text-slate-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2 mb-3">
                         <Sparkles size={14} /> 关于
                     </h2>
-                    <div className="bg-[#121212] rounded-2xl overflow-hidden border border-white/5 shadow-lg divide-y divide-white/5">
+                    <div className="bg-[#1a1a1a] rounded-2xl overflow-hidden border border-white/5 shadow-lg divide-y divide-white/5 transition-all hover:shadow-xl hover:border-white/10">
                          <div
                             onClick={onOpenSponsor}
                             className="p-4 flex items-center justify-between hover:bg-white/5 transition-colors cursor-pointer group active:bg-white/10"
@@ -380,14 +383,15 @@ const Settings: React.FC<SettingsProps> = ({
                     </div>
                 </section>
 
-                {/* 4. 危险区域 */}
+                {/* 危险区域 */}
                 <section>
-                    <h2 className="text-slate-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2 mb-4">
-                        <Info size={12} />危险区域
+                    <h2 className="text-slate-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2 mb-3">
+                        <Info size={12} />
+                        危险区域
                     </h2>
                     <div
                         onClick={handleClearCache}
-                        className="bg-red-500/5 rounded-2xl p-4 border border-red-500/10 flex items-center gap-3 cursor-pointer hover:bg-red-500/10 transition-colors group active:scale-[0.99]"
+                        className="bg-red-500/5 rounded-2xl p-4 border border-red-500/10 flex items-center gap-3 cursor-pointer hover:bg-red-500/10 transition-all group active:scale-[0.99]"
                     >
                         <div className="p-3 bg-red-500/10 rounded-full text-red-500 group-hover:scale-110 transition-transform">
                             <Trash2 size={20} />
@@ -410,7 +414,7 @@ const Settings: React.FC<SettingsProps> = ({
             {/* Loading Overlay */}
             {loading && (
                 <div className="absolute inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center flex-col animate-in fade-in duration-200">
-                    <div className="bg-[#121212] p-6 rounded-2xl shadow-2xl flex flex-col items-center border border-white/10">
+                    <div className="bg-[#1a1a1a] p-6 rounded-2xl shadow-2xl flex flex-col items-center border border-white/10">
                         <RefreshCw size={32} className="text-indigo-500 animate-spin mb-4" />
                         <p className="text-white text-sm font-bold">正在处理数据...</p>
                         <p className="text-slate-500 text-xs mt-2">请勿关闭应用</p>

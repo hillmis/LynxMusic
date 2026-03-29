@@ -1,4 +1,16 @@
 ﻿import { Song, Playlist } from '../types';
+
+// 接口定义
+export interface ApiOptions {
+    host?: string;
+    key?: string;
+    timeout?: number;
+    forceProxy?: boolean;
+    skipProxy?: boolean;
+    fallbackToProxy?: boolean;
+    proxyPool?: Array<(url: string) => string>;
+}
+
 // --- API 类型配置相关函数 ---
 // 支持运行时自定义配置
 let customApiTypeConfig = null;
@@ -67,6 +79,31 @@ export const localApiConfig = {
     timeout: 20000,
     skipProxy: true,
     fallbackToProxy: false
+};
+
+// 代理池配置
+export const PROXY_POOL = [
+    // CORS Anywhere 代理
+    (url: string) => `https://cors-anywhere.herokuapp.com/${url}`,
+    // AllOrigins 代理
+    (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    // 其他代理服务
+    (url: string) => `https://cors-proxy.htmldriven.com/?url=${encodeURIComponent(url)}`,
+    (url: string) => `https://crossorigin.me/${url}`
+];
+
+// 常量定义
+export const REQUEST_TIMEOUT_MS = 10000;
+export const RETRY_LIMIT = 3;
+export const BATCH_SIZE = 30;
+export const DEFAULT_API_KEY = 'default-api-key';
+
+// 获取 API 配置
+export const getApiConfig = (options: ApiOptions = {}): ApiOptions => {
+    return {
+        ...customApiOptions,
+        ...options
+    };
 };
 
 
